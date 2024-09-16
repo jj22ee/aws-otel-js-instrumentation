@@ -1,0 +1,18 @@
+# Meant to be run from aws-otel-python-instrumentation
+# Assumes existence of dist/aws_opentelemetry_distro-<pkg_version>-py3-none-any.whl.
+# Assumes filename of aws_opentelemetry_distro-<pkg_version>-py3-none-any.whl is passed in as "DISTRO" arg.
+FROM node:20
+
+WORKDIR /app
+COPY ./sample-applications/performance-express-service /app
+
+RUN npm install --save @opentelemetry/api
+RUN npm install --save @opentelemetry/auto-instrumentations-node
+RUN npm install
+
+# Install Python
+RUN apt-get update && \
+    apt-get install -y python3-pip
+RUN pip3 install psutil py-spy --break-system-packages
+
+EXPOSE 8080 8081

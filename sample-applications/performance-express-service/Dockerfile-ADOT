@@ -1,0 +1,28 @@
+# Meant to be run from aws-otel-python-instrumentation
+# Assumes existence of dist/aws_opentelemetry_distro-<pkg_version>-py3-none-any.whl.
+# Assumes filename of aws_opentelemetry_distro-<pkg_version>-py3-none-any.whl is passed in as "DISTRO" arg.
+FROM node:20.5.0
+
+# Build the ADOT JS SDK Tarball: aws-aws-distro-opentelemetry-node-autoinstrumentation-x.y.z.tgz
+WORKDIR /adot-js-build
+COPY . .
+RUN npm install
+WORKDIR /adot-js-build/aws-distro-opentelemetry-node-autoinstrumentation
+RUN npm run compile
+RUN npm pack
+
+
+WORKDIR /app
+RUN cp /adot-js-build/aws-distro-opentelemetry-node-autoinstrumentation/aws-aws-distro-opentelemetry-node-autoinstrumentation-*.tgz /app
+COPY ./sample-applications/performance-express-service /app
+
+RUN npm install aws-aws-distro-opentelemetry-node-autoinstrumentation-$(node -p -e "require('/adot-js-build/aws-distro-opentelemetry-node-autoinstrumentation/package.json').version").tgz
+RUN npm install
+
+# Install Python
+RUN apt-get update && \
+    apt-get install -y python3-pip
+RUN pip3 install psutil py-spy --break-system-packages
+
+
+EXPOSE 8080 8081
