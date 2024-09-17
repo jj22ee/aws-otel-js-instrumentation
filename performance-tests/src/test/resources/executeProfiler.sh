@@ -9,6 +9,9 @@
 # the command once and quits. This is just a simple workaround. Also, reason we are
 # outputting to output.txt is that output logs of the script can be checked during the run inside the container.
 
+# Fail fast
+set -ex
+
 file_name=$1
 results_path=$2
 python3 profiler.py ${file_name} ${results_path} >> output.txt &

@@ -68,7 +68,7 @@ public class SimpleServiceContainer {
             .withEnv("TEST_NAME", distroConfig.getName())
             .withEnv("PROFILE", System.getenv("PROFILE"))
             .withEnv("DURATION", System.getenv("DURATION"))
-            .withEnv("LISTEN_ADDRESS", "0.0.0.0:" + port)
+            .withEnv("SAMPLE_APP_PORT", ""+port)
             .dependsOn(collector)
             .withCreateContainerCmdModifier(
                 cmd -> cmd.getHostConfig()

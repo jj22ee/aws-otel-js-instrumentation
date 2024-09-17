@@ -12,7 +12,7 @@ import psutil
 # are the perf metrics that are being recorded: Network Bytes Sent/Received, Peak Threads, CPU Usage,
 # Resident Memory and Virtual Memory.
 # Usage: python3 profiler.py <file_name.json> <dir_to_save_in>
-
+print("Start349328237")
 
 def get_pid(process_name_substring: str) -> int:
     pid = None
@@ -30,8 +30,8 @@ def get_pid(process_name_substring: str) -> int:
 if len(sys.argv) < 2:
     sys.exit("Please provide file performance file suffix!")
 
-pid = get_pid("python3")
-
+pid = get_pid("node")
+print(str(pid) + "-----123")
 file_name = sys.argv[1]
 results_dir = sys.argv[2]
 

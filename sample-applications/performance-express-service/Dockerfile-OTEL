@@ -10,9 +10,8 @@ RUN npm install --save @opentelemetry/api
 RUN npm install --save @opentelemetry/auto-instrumentations-node
 RUN npm install
 
-# Install Python
-RUN apt-get update && \
-    apt-get install -y python3-pip
-RUN pip3 install psutil py-spy --break-system-packages
+# Install pip3 and psutil
+RUN apt-get update && apt-get install -y python3-pip
+RUN pip3 install psutil --break-system-packages
 
 EXPOSE 8080 8081

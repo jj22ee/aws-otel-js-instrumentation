@@ -11,7 +11,6 @@
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
-    "@aws/aws-distro-opentelemetry-node-autoinstrumentation": "file:../../aws-distro-opentelemetry-node-autoinstrumentation/aws-aws-distro-opentelemetry-node-autoinstrumentation-0.1.0-dev0.tgz",
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.6",
     "body-parser": "^1.20.2",
