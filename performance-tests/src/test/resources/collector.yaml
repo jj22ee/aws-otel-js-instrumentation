@@ -1,14 +1,15 @@
 extensions:
   health_check:
-    endpoint: "0.0.0.0:13133"
+    # endpoint: "0.0.0.0:13133"
+  awsproxy:
 
 receivers:
   otlp:
     protocols:
       grpc:
-        endpoint: 0.0.0.0:4317
+        # endpoint: 0.0.0.0:4317
       http:
-        endpoint: 0.0.0.0:4318
+        # endpoint: 0.0.0.0:4318
 
 processors:
   batch:
@@ -34,4 +35,7 @@ service:
       processors: [batch]
       exporters: [logging/logging_info]
 
-  extensions: [health_check]
+  extensions: [health_check,awsproxy]
+  telemetry:
+    logs:
+      level: debug

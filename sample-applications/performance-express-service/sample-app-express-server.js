@@ -12,13 +12,6 @@ app.get('/health-check', (req, res) => {
 });
 
 app.get('/dep', (req, res) => {
-  // const options = {
-  //   hostname: 'http://simple-service',
-  //   port: 8081,
-  //   path: '/health-check',
-  //   method: 'GET',
-  // };
-
   const httpRequest = http.request('http://simple-service:8081/health-check', (rs) => {
     rs.setEncoding('utf8');
     let responseData = '';
@@ -26,9 +19,7 @@ app.get('/dep', (req, res) => {
     rs.on('end', () => {
       res.send("")
     });
-    // rs.on('data', (result) => {
-    //   res.send(`random value from http request: ${result}`);
-    // });
+
     rs.on('error', console.log);
   }).on('error', (error) => {
     console.log(`Error occurred when making an HTTP request: ${error}`);

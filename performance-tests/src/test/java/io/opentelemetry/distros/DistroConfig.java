@@ -18,7 +18,12 @@ public enum DistroConfig {
   OTEL_100(
       "OTEL distro with 100% sampling",
       true,
-      Map.of("OTEL_TRACES_SAMPLER", "traceidratio", "OTEL_TRACES_SAMPLER_ARG", "1"),
+      Map.of(
+        "OTEL_TRACES_SAMPLER",
+        "traceidratio",
+        "OTEL_TRACES_SAMPLER_ARG",
+        "1"
+      ),
       "performance-test/simple-service-otel"),
   ADOT_100(
       "ADOT distro with Application Signals disabled, 100% sampling",
@@ -26,10 +31,15 @@ public enum DistroConfig {
       Map.of(
           "ADOT",
           "true",
+          "AWS_REGION",
+          "us-west-2",
           "OTEL_TRACES_SAMPLER",
-          "traceidratio",
+          "xray",
           "OTEL_TRACES_SAMPLER_ARG",
-          "1"),
+          "endpoint=http://collector:2000",
+          "OTEL_RESOURCE_ATTRIBUTES",
+          "service.name=100_percent"
+      ),
       "performance-test/simple-service-adot"),
   AS_100(
       "ADOT distro with Application Signals enabled, 100% sampling",
@@ -37,14 +47,65 @@ public enum DistroConfig {
       Map.of(
           "ADOT",
           "true",
+          "AWS_REGION",
+          "us-west-2",
           "OTEL_TRACES_SAMPLER",
-          "traceidratio",
+          "xray",
           "OTEL_TRACES_SAMPLER_ARG",
-          "1",
+          "endpoint=http://collector:2000",
+          "OTEL_RESOURCE_ATTRIBUTES",
+          "service.name=100_percent",
           "OTEL_AWS_APPLICATION_SIGNALS_ENABLED",
           "true",
           "OTEL_AWS_APPLICATION_SIGNALS_EXPORTER_ENDPOINT",
-          "http://collector:4318/v1/metrics"),
+          "http://collector:4318/v1/metrics"
+      ),
+      "performance-test/simple-service-adot"),
+  OTEL_005(
+      "OTEL distro with 5% sampling",
+      true,
+      Map.of(
+        "OTEL_TRACES_SAMPLER",
+        "traceidratio",
+        "OTEL_TRACES_SAMPLER_ARG",
+        "0.05"
+      ),
+      "performance-test/simple-service-otel"),
+  ADOT_005(
+      "ADOT distro with Application Signals disabled, 5% sampling",
+      true,
+      Map.of(
+          "ADOT",
+          "true",
+          "AWS_REGION",
+          "us-west-2",
+          "OTEL_TRACES_SAMPLER",
+          "xray",
+          "OTEL_TRACES_SAMPLER_ARG",
+          "endpoint=http://collector:2000",
+          "OTEL_RESOURCE_ATTRIBUTES",
+          "service.name=5_percent"
+      ),
+      "performance-test/simple-service-adot"),
+  AS_005(
+      "ADOT distro with Application Signals enabled, 5% sampling",
+      true,
+      Map.of(
+          "ADOT",
+          "true",
+          "AWS_REGION",
+          "us-west-2",
+          "OTEL_TRACES_SAMPLER",
+          "xray",
+          "OTEL_TRACES_SAMPLER_ARG",
+          "endpoint=http://collector:2000",
+          "OTEL_RESOURCE_ATTRIBUTES",
+          "service.name=5_percent",
+          "OTEL_AWS_APPLICATION_SIGNALS_ENABLED",
+          "true",
+          "OTEL_AWS_APPLICATION_SIGNALS_EXPORTER_ENDPOINT",
+          "http://collector:4318/v1/metrics"
+      ),
       "performance-test/simple-service-adot");
 
   private final String description;

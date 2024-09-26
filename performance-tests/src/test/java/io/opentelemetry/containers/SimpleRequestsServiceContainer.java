@@ -78,8 +78,8 @@ public class SimpleRequestsServiceContainer {
           .withEnv("OTEL_METRICS_EXPORTER", "none")
           .withEnv("OTEL_METRIC_EXPORT_INTERVAL", "60000")
           .withEnv("OTEL_EXPORTER_OTLP_INSECURE", "true")
-          .withEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
-          .withEnv("OTEL_RESOURCE_ATTRIBUTES", "service.name=requests_server");
+          .withEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318");
+        //   .withEnv("OTEL_RESOURCE_ATTRIBUTES", "service.name=requests_server");
     }
     return container;
   }

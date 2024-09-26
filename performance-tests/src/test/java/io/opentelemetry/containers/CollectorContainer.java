@@ -26,14 +26,17 @@ public class CollectorContainer {
   public static GenericContainer<?> build(Network network) {
 
     return new GenericContainer<>(
-            DockerImageName.parse("otel/opentelemetry-collector-contrib:latest"))
+            DockerImageName.parse("public.ecr.aws/aws-observability/aws-otel-collector:latest"))
         .withNetwork(network)
         .withNetworkAliases("collector")
         .withLogConsumer(new Slf4jLogConsumer(logger))
-        .withExposedPorts(COLLECTOR_PORT, COLLECTOR_HEALTH_CHECK_PORT)
+        .withExposedPorts(COLLECTOR_PORT, COLLECTOR_HEALTH_CHECK_PORT, 2000)
         .waitingFor(Wait.forHttp("/health").forPort(COLLECTOR_HEALTH_CHECK_PORT))
         .withCopyFileToContainer(
             MountableFile.forClasspathResource("collector.yaml"), "/etc/otel.yaml")
+            .withEnv("AWS_REGION", "us-west-2")
+            .withEnv("aaa", "bbb")
+            .withEnv("ccc", "ddd")
         .withCreateContainerCmdModifier(
             cmd -> cmd.getHostConfig().withCpusetCpus(RuntimeUtil.getNonApplicationCores()))
         .withCommand("--config /etc/otel.yaml");

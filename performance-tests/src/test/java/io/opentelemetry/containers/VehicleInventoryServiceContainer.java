@@ -84,8 +84,8 @@ public class VehicleInventoryServiceContainer {
           .withEnv("OTEL_METRICS_EXPORTER", "none")
           .withEnv("OTEL_IMR_EXPORT_INTERVAL", "5000")
           .withEnv("OTEL_EXPORTER_OTLP_INSECURE", "true")
-          .withEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317")
-          .withEnv("OTEL_RESOURCE_ATTRIBUTES", "service.name=vehicle_inventory_service");
+          .withEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317");
+        //   .withEnv("OTEL_RESOURCE_ATTRIBUTES", "service.name=vehicle_inventory_service");
     }
     return container;
   }

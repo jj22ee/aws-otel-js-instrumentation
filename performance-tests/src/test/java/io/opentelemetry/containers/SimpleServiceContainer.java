@@ -85,8 +85,8 @@ public class SimpleServiceContainer {
           .withEnv("OTEL_METRIC_EXPORT_INTERVAL", "60000")
           .withEnv("OTEL_EXPORTER_OTLP_INSECURE", "true")
           .withEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
-          .withEnv("OTEL_PYTHON_DISABLED_INSTRUMENTATIONS", "flask")
-          .withEnv("OTEL_RESOURCE_ATTRIBUTES", "service.name=flask_server");
+          .withEnv("OTEL_PYTHON_DISABLED_INSTRUMENTATIONS", "flask");
+        //   .withEnv("OTEL_RESOURCE_ATTRIBUTES", "service.name=flask_server");
     }
     return container;
   }
