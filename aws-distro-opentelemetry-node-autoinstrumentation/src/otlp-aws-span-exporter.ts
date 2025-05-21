@@ -101,7 +101,7 @@ export class OTLPAwsSpanExporter extends OTLPProtoTraceExporter {
     }
 
     if (isAgentObservabilityEnabled() && this.lloHandler) {
-      const lloProcessedSpans = this.lloHandler.process_spans(items);
+      const lloProcessedSpans = this.lloHandler.processSpans(items);
       super.export(lloProcessedSpans, resultCallback);
     }
 
