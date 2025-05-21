@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const AGENT_OBSERVABILITY_ENABLED = "AGENT_OBSERVABILITY_ENABLED";
+const AGENT_OBSERVABILITY_ENABLED = 'AGENT_OBSERVABILITY_ENABLED';
 
 // Bypass `readonly` restriction of a Type.
 // Workaround provided from official TypeScript docs:
@@ -32,4 +32,4 @@ export const isAgentObservabilityEnabled = () => {
   }
 
   return agentObservabilityEnabled.toLowerCase() === 'true';
-}
+};
