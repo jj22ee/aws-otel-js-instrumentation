@@ -19,17 +19,6 @@ import { ReadableSpan, TimedEvent } from '@opentelemetry/sdk-trace-base';
 import { AnyValue } from '@opentelemetry/api-logs';
 import { Mutable } from './utils';
 
-// import logging
-// import re
-// from typing import Any, Dict, List, Optional, Sequence
-
-// from opentelemetry.events import Event
-// from opentelemetry.attributes import BoundedAttributes
-// from opentelemetry.sdk.events import EventLoggerProvider
-// from opentelemetry.sdk.logs import LoggerProvider
-// from opentelemetry.sdk.trace import Event as SpanEvent
-// from opentelemetry.sdk.trace import ReadableSpan
-
 // Message event types
 const GEN_AI_SYSTEM_MESSAGE = 'gen_ai.system.message';
 const GEN_AI_USER_MESSAGE = 'gen_ai.user.message';
@@ -88,6 +77,43 @@ interface PromptContent {
 
 diag.setLogger(new DiagConsoleLogger(), opentelemetry.core.getEnv().OTEL_LOG_LEVEL);
 
+/**
+ * Utility class for handling Large Language Objects (LLO) in OpenTelemetry spans.
+
+ * LLOHandler performs three primary functions:
+ * 1. Identifies Large Language Objects (LLO) content in spans
+ * 2. Extracts and transforms these attributes into OpenTelemetry Gen AI Events
+ * 3. Filters LLO from spans to maintain privacy and reduce span size
+
+ * Supported frameworks and their attribute patterns:
+ * - Standard Gen AI:
+ *   - gen_ai.prompt.{n}.content: Structured prompt content
+ *   - gen_ai.prompt.{n}.role: Role for prompt content (system, user, assistant, etc.)
+ *   - gen_ai.completion.{n}.content: Structured completion content
+ *   - gen_ai.completion.{n}.role: Role for completion content (usually assistant)
+
+ * - Traceloop:
+ *   - traceloop.entity.input: Input text for LLM operations
+ *   - traceloop.entity.output: Output text from LLM operations
+ *   - traceloop.entity.name: Name of the entity processing the LLO
+ *   - crewai.crew.tasks_output: Tasks output data from CrewAI (uses gen_ai.system if available)
+ *   - crewai.crew.result: Final result from CrewAI crew (uses gen_ai.system if available)
+
+ * - OpenLit:
+ *   - gen_ai.prompt: Direct prompt text (treated as user message)
+ *   - gen_ai.completion: Direct completion text (treated as assistant message)
+ *   - gen_ai.content.revised_prompt: Revised prompt text (treated as system message)
+ *   - gen_ai.agent.actual_output: Output from CrewAI agent (treated as assistant message)
+
+ * - OpenInference:
+ *   - input.value: Direct input prompt
+ *   - output.value: Direct output response
+ *   - llm.input_messages.{n}.message.content: Individual structured input messages
+ *   - llm.input_messages.{n}.message.role: Role for input messages
+ *   - llm.output_messages.{n}.message.content: Individual structured output messages
+ *   - llm.output_messages.{n}.message.role: Role for output messages
+ *   - llm.model_name: Model name used for the LLM operation
+ */
 export class LLOHandler {
   private loggerProvider: LoggerProvider;
   private eventLoggerProvider: EventLoggerProvider;
@@ -107,83 +133,41 @@ export class LLOHandler {
   // this.openinferenceInputMsgPattern = re.compile(r"^llm\.input_messages\.(\d+)\.message\.content$")
   // this.openinferenceOutputMsgPattern = re.compile(r"^llm\.output_messages\.(\d+)\.message\.content$")
 
-  /*
-    Utility class for handling Large Language Objects (LLO) in OpenTelemetry spans.
-
-    LLOHandler performs three primary functions:
-    1. Identifies Large Language Objects (LLO) content in spans
-    2. Extracts and transforms these attributes into OpenTelemetry Gen AI Events
-    3. Filters LLO from spans to maintain privacy and reduce span size
-
-    Supported frameworks and their attribute patterns:
-    - Standard Gen AI:
-      - gen_ai.prompt.{n}.content: Structured prompt content
-      - gen_ai.prompt.{n}.role: Role for prompt content (system, user, assistant, etc.)
-      - gen_ai.completion.{n}.content: Structured completion content
-      - gen_ai.completion.{n}.role: Role for completion content (usually assistant)
-
-    - Traceloop:
-      - traceloop.entity.input: Input text for LLM operations
-      - traceloop.entity.output: Output text from LLM operations
-      - traceloop.entity.name: Name of the entity processing the LLO
-      - crewai.crew.tasks_output: Tasks output data from CrewAI (uses gen_ai.system if available)
-      - crewai.crew.result: Final result from CrewAI crew (uses gen_ai.system if available)
-
-    - OpenLit:
-      - gen_ai.prompt: Direct prompt text (treated as user message)
-      - gen_ai.completion: Direct completion text (treated as assistant message)
-      - gen_ai.content.revised_prompt: Revised prompt text (treated as system message)
-      - gen_ai.agent.actual_output: Output from CrewAI agent (treated as assistant message)
-
-    - OpenInference:
-      - input.value: Direct input prompt
-      - output.value: Direct output response
-      - llm.input_messages.{n}.message.content: Individual structured input messages
-      - llm.input_messages.{n}.message.role: Role for input messages
-      - llm.output_messages.{n}.message.content: Individual structured output messages
-      - llm.output_messages.{n}.message.role: Role for output messages
-      - llm.model_name: Model name used for the LLM operation
-    */
-
+  /**
+   * Initialize an LLOHandler with the specified logger provider.
+   *
+   * This constructor sets up the event logger provider, configures the event logger,
+   * and initializes the patterns used to identify LLO attributes.
+   *
+   * @param loggerProvider The OpenTelemetry LoggerProvider used for emitting events.
+   *     Global LoggerProvider instance injected from our AwsOpenTelemetryConfigurator
+   */
   public constructor(loggerProvider: LoggerProvider) {
-    /*
-        Initialize an LLOHandler with the specified logger provider.
-
-        This constructor sets up the event logger provider, configures the event logger,
-        and initializes the patterns used to identify LLO attributes.
-
-        Args:
-            loggerProvider: The OpenTelemetry LoggerProvider used for emitting events.
-                           Global LoggerProvider instance injected from our AwsOpenTelemetryConfigurator
-        */
     this.loggerProvider = loggerProvider;
 
     this.eventLoggerProvider = new EventLoggerProvider(this.loggerProvider);
     this.eventLogger = this.eventLoggerProvider.getEventLogger('gen_ai.events');
   }
 
+  /**
+   * Processes a sequence of spans to extract and filter LLO attributes.
+   *
+   * For each span, this method:
+   * 1. Extracts LLO attributes and emits them as Gen AI Events
+   * 2. Filters out LLO attributes from the span to maintain privacy
+   * 3. Processes any LLO attributes in span events
+   * 4. Preserves non-LLO attributes in the span
+   *
+   * Handles LLO attributes from multiple frameworks:
+   * - Standard Gen AI (structured prompt/completion pattern)
+   * - Traceloop (entity input/output pattern)
+   * - OpenLit (direct prompt/completion pattern)
+   * - OpenInference (input/output value and structured messages pattern)
+   *
+   * @param spans An array of OpenTelemetry ReadableSpan objects to process
+   * @returns {ReadableSpan[]} Modified spans with LLO attributes removed
+   */
   public processSpans(spans: ReadableSpan[]): ReadableSpan[] {
-    /*
-        Processes a sequence of spans to extract and filter LLO attributes.
-
-        For each span, this method:
-        1. Extracts LLO attributes and emits them as Gen AI Events
-        2. Filters out LLO attributes from the span to maintain privacy
-        3. Processes any LLO attributes in span events
-        4. Preserves non-LLO attributes in the span
-
-        Handles LLO attributes from multiple frameworks:
-        - Standard Gen AI (structured prompt/completion pattern)
-        - Traceloop (entity input/output pattern)
-        - OpenLit (direct prompt/completion pattern)
-        - OpenInference (input/output value and structured messages pattern)
-
-        Args:
-            spans: A sequence of OpenTelemetry ReadableSpan objects to process
-
-        Returns:
-            ReadableSpan[]: Modified spans with LLO attributes removed
-        */
     const modifiedSpans: ReadableSpan[] = [];
 
     for (const span of spans) {
@@ -210,25 +194,21 @@ export class LLOHandler {
     return modifiedSpans;
   }
 
-  public processSpanEvents(span: ReadableSpan): void {
-    /*
-        Process events within a span to extract and filter LLO attributes.
-
-        For each event in the span, this method:
-        1. Emits LLO attributes found in event attributes as Gen AI Events
-        2. Filters out LLO attributes from event attributes
-        3. Creates updated events with filtered attributes
-        4. Replaces the original span events with updated events
-
-        This ensures that LLO attributes are properly handled even when they appear
-        in span events rather than directly in the span's attributes.
-
-        Args:
-            span: The ReadableSpan to process events for
-
-        Returns:
-            None: The span is modified in-place
-        */
+  /**
+   * Process events within a span to extract and filter LLO attributes.
+   *
+   * For each event in the span, this method:
+   * 1. Emits LLO attributes found in event attributes as Gen AI Events
+   * 2. Filters out LLO attributes from event attributes
+   * 3. Creates updated events with filtered attributes
+   * 4. Replaces the original span events with updated events
+   *
+   * This ensures that LLO attributes are properly handled even when they appear
+   * in span events rather than directly in the span's attributes.
+   *
+   * @param span The ReadableSpan to process events for
+   */
+  public processSpanEvents(span: ReadableSpan) {
     if (!span.events) {
       return;
     }
@@ -277,33 +257,29 @@ export class LLOHandler {
     mutableSpan.events = updatedEvents;
   }
 
+  /**
+   * Extract Gen AI Events from LLO attributes and emit them via the event logger.
+   *
+   * This method:
+   * 1. Collects LLO attributes from multiple frameworks using specialized extractors
+   * 2. Converts each LLO attribute into appropriate Gen AI Events
+   * 3. Emits all collected events through the event logger
+   *
+   * Supported frameworks:
+   * - Standard Gen AI: Structured prompt/completion with roles
+   * - Traceloop: Entity input/output and CrewAI outputs
+   * - OpenLit: Direct prompt/completion/revised prompt and agent outputs
+   * - OpenInference: Direct values and structured messages
+   *
+   * @param span The source ReadableSpan containing the attributes
+   * @param attributes Attributes to process
+   * @param eventTimestamp Optional timestamp to override span timestamps
+   */
   private emitLloAttributes(
     span: ReadableSpan,
     attributes: Attributes,
     eventTimestamp: HrTime | undefined = undefined
   ) {
-    /*
-        Extract Gen AI Events from LLO attributes and emit them via the event logger.
-
-        This method:
-        1. Collects LLO attributes from multiple frameworks using specialized extractors
-        2. Converts each LLO attribute into appropriate Gen AI Events
-        3. Emits all collected events through the event logger
-
-        Supported frameworks:
-        - Standard Gen AI: Structured prompt/completion with roles
-        - Traceloop: Entity input/output and CrewAI outputs
-        - OpenLit: Direct prompt/completion/revised prompt and agent outputs
-        - OpenInference: Direct values and structured messages
-
-        Args:
-            span: The source ReadableSpan containing the attributes
-            attributes: Dictionary of attributes to process
-            eventTimestamp: Optional timestamp to override span timestamps
-
-        Returns:
-            None: Events are emitted via the event logger
-        */
     // Quick check if we have any LLO attributes before running extractors
     let hasLloAttrs = false;
     for (const key in attributes) {
@@ -331,20 +307,17 @@ export class LLOHandler {
     }
   }
 
+  /**
+   * Create a new attributes dictionary with LLO attributes removed.
+
+   * This method creates a new dictionary containing only non-LLO attributes,
+   * preserving the original values while filtering out sensitive LLO content.
+   * This helps maintain privacy and reduces the size of spans.
+   * 
+   * @param attributes Span or event attributes
+   * @returns {Attributes} New Attributes with LLO attributes removed
+   */
   private filterAttributes(attributes: Attributes): Attributes {
-    /*
-        Create a new attributes dictionary with LLO attributes removed.
-
-        This method creates a new dictionary containing only non-LLO attributes,
-        preserving the original values while filtering out sensitive LLO content.
-        This helps maintain privacy and reduces the size of spans.
-
-        Args:
-            attributes: Original dictionary of span or event attributes
-
-        Returns:
-            Attributes: New dictionary with LLO attributes removed
-        */
     // First check if we need to filter anything
     let hasLloAttrs = false;
     for (const key in attributes) {
@@ -370,27 +343,23 @@ export class LLOHandler {
     return filteredAttributes;
   }
 
+  /**
+   * Determine if an attribute key contains LLO content based on pattern matching.
+   *
+   * Checks attribute keys against two types of patterns:
+   * 1. Exact match patterns (complete string equality):
+   *    - Traceloop: "traceloop.entity.input", "traceloop.entity.output"
+   *    - OpenLit: "gen_ai.prompt", "gen_ai.completion", "gen_ai.content.revised_prompt"
+   *    - OpenInference: "input.value", "output.value"
+   *
+   * 2. Regex match patterns (regular expression matching):
+   *    - Standard Gen AI: "gen_ai.prompt.{n}.content", "gen_ai.completion.{n}.content"
+   *    - OpenInference: "llm.input_messages.{n}.message.content", "llm.output_messages.{n}.message.content"
+   *
+   * @param key The attribute key to check
+   * @returns {boolean} true if the key matches any LLO pattern, false otherwise
+   */
   private isLloAttribute(key: string): boolean {
-    /*
-        Determine if an attribute key contains LLO content based on pattern matching.
-
-        Checks attribute keys against two types of patterns:
-        1. Exact match patterns (complete string equality):
-           - Traceloop: "traceloop.entity.input", "traceloop.entity.output"
-           - OpenLit: "gen_ai.prompt", "gen_ai.completion", "gen_ai.content.revised_prompt"
-           - OpenInference: "input.value", "output.value"
-
-        2. Regex match patterns (regular expression matching):
-           - Standard Gen AI: "gen_ai.prompt.{n}.content", "gen_ai.completion.{n}.content"
-           - OpenInference: "llm.input_messages.{n}.message.content",
-                           "llm.output_messages.{n}.message.content"
-
-        Args:
-            key: The attribute key to check
-
-        Returns:
-            boolean: true if the key matches any LLO pattern, false otherwise
-        */
     // Check exact matches first (O(1) lookup in a set)
     if (key in exactMatchPatterns) {
       return true;
@@ -406,32 +375,29 @@ export class LLOHandler {
     return false;
   }
 
+  /**
+   * Extract Gen AI Events from structured prompt attributes.
+   *
+   * Processes attributes matching the pattern `gen_ai.prompt.{n}.content` and their
+   * associated `gen_ai.prompt.{n}.role` attributes to create appropriate events.
+   *
+   * Event types are determined by the role:
+   * 1. `system` → `gen_ai.system.message` Event
+   * 2. `user` → `gen_ai.user.message` Event
+   * 3. `assistant` → `gen_ai.assistant.message` Event
+   * 4. `function` → `gen_ai.{gen_ai.system}.message` custom Event
+   * 5. `unknown` → `gen_ai.{gen_ai.system}.message` custom Event
+   *
+   * @param span The source ReadableSpan containing the attributes
+   * @param attributes Attributes to process
+   * @param eventTimestamp Optional timestamp to override span.startTime
+   * @returns {Event[]} Events created from prompt attributes
+   */
   private extractGenAiPromptEvents(
     span: ReadableSpan,
     attributes: Attributes,
     eventTimestamp: HrTime | undefined = undefined
   ): Event[] {
-    /*
-        Extract Gen AI Events from structured prompt attributes.
-
-        Processes attributes matching the pattern `gen_ai.prompt.{n}.content` and their
-        associated `gen_ai.prompt.{n}.role` attributes to create appropriate events.
-
-        Event types are determined by the role:
-        1. `system` → `gen_ai.system.message` Event
-        2. `user` → `gen_ai.user.message` Event
-        3. `assistant` → `gen_ai.assistant.message` Event
-        4. `function` → `gen_ai.{gen_ai.system}.message` custom Event
-        5. `unknown` → `gen_ai.{gen_ai.system}.message` custom Event
-
-        Args:
-            span: The source ReadableSpan containing the attributes
-            attributes: Dictionary of attributes to process
-            eventTimestamp: Optional timestamp to override span.start_time
-
-        Returns:
-            Event[]: Events created from prompt attributes
-        */
     // Quick check if any prompt content attributes exist
     //[] if (!any(this.promptContentPattern.match(key) for key in attributes)) {
     //     return []
@@ -482,29 +448,26 @@ export class LLOHandler {
     return events;
   }
 
+  /**
+   * Extract Gen AI Events from structured completion attributes.
+   *
+   * Processes attributes matching the pattern `gen_ai.completion.{n}.content` and their
+   * associated `gen_ai.completion.{n}.role` attributes to create appropriate events.
+   *
+   * Event types are determined by the role:
+   * 1. `assistant` → `gen_ai.assistant.message` Event (most common)
+   * 2. Other roles → `gen_ai.{gen_ai.system}.message` custom Event
+   *
+   * @param span The source ReadableSpan containing the attributes
+   * @param attributes Attributes to process
+   * @param eventTimestamp Optional timestamp to override span.endTime
+   * @returns {Event[]} Events created from completion attributes
+   */
   private extractGenAiCompletionEvents(
     span: ReadableSpan,
     attributes: Attributes,
     eventTimestamp: HrTime | undefined = undefined
   ): Event[] {
-    /*
-        Extract Gen AI Events from structured completion attributes.
-
-        Processes attributes matching the pattern `gen_ai.completion.{n}.content` and their
-        associated `gen_ai.completion.{n}.role` attributes to create appropriate events.
-
-        Event types are determined by the role:
-        1. `assistant` → `gen_ai.assistant.message` Event (most common)
-        2. Other roles → `gen_ai.{gen_ai.system}.message` custom Event
-
-        Args:
-            span: The source ReadableSpan containing the attributes
-            attributes: Dictionary of attributes to process
-            eventTimestamp: Optional timestamp to override span.end_time
-
-        Returns:
-            Event[]: Events created from completion attributes
-        */
     // Quick check if any completion content attributes exist
     //[] if (!any(this.completionContentPattern.match(key) for key in attributes)) {
     //     return []
@@ -555,35 +518,32 @@ export class LLOHandler {
     return events;
   }
 
+  /**
+   * Extract Gen AI Events from Traceloop attributes.
+   *
+   * Processes Traceloop-specific attributes:
+   * - `traceloop.entity.input`: Input data (uses span.startTime)
+   * - `traceloop.entity.output`: Output data (uses span.endTime)
+   * - `traceloop.entity.name`: Used as the gen_ai.system value when gen_ai.system isn't available
+   * - `crewai.crew.tasksOutput`: Tasks output data from CrewAI (uses span.endTime)
+   * - `crewai.crew.result`: Final result from CrewAI crew (uses span.endTime)
+   *
+   * Creates generic `gen_ai.{entity_name}.message` events for both input and output,
+   * and assistant message events for CrewAI outputs.
+   *
+   * For CrewAI-specific attributes (crewai.crew.tasks_output and crewai.crew.result),
+   * uses span's gen_ai.system attribute if available, otherwise falls back to traceloop.entity.name.
+   *
+   * @param span The source ReadableSpan containing the attributes
+   * @param attributes Attributes to process
+   * @param eventTimestamp Optional timestamp to override span timestamps
+   * @returns {Event[]} Events created from Traceloop attributes
+   */
   private extractTraceloopEvents(
     span: ReadableSpan,
     attributes: Attributes,
     eventTimestamp: HrTime | undefined = undefined
   ): Event[] {
-    /*
-        Extract Gen AI Events from Traceloop attributes.
-
-        Processes Traceloop-specific attributes:
-        - `traceloop.entity.input`: Input data (uses span.start_time)
-        - `traceloop.entity.output`: Output data (uses span.end_time)
-        - `traceloop.entity.name`: Used as the gen_ai.system value when gen_ai.system isn't available
-        - `crewai.crew.tasksOutput`: Tasks output data from CrewAI (uses span.end_time)
-        - `crewai.crew.result`: Final result from CrewAI crew (uses span.end_time)
-
-        Creates generic `gen_ai.{entity_name}.message` events for both input and output,
-        and assistant message events for CrewAI outputs.
-
-        For CrewAI-specific attributes (crewai.crew.tasks_output and crewai.crew.result),
-        uses span's gen_ai.system attribute if available, otherwise falls back to traceloop.entity.name.
-
-        Args:
-            span: The source ReadableSpan containing the attributes
-            attributes: Dictionary of attributes to process
-            eventTimestamp: Optional timestamp to override span timestamps
-
-        Returns:
-            Event[]: Events created from Traceloop attributes
-        */
     // Define the Traceloop attributes we're looking for
     const traceloopKeys = {
       TRACELOOP_ENTITY_INPUT,
@@ -662,32 +622,29 @@ export class LLOHandler {
     return events;
   }
 
+  /**
+   * Extract Gen AI Events from OpenLit direct attributes.
+
+   * OpenLit uses direct key-value pairs for LLO attributes:
+   * - `gen_ai.prompt`: Direct prompt text (treated as user message)
+   * - `gen_ai.completion`: Direct completion text (treated as assistant message)
+   * - `gen_ai.content.revised_prompt`: Revised prompt text (treated as system message)
+   * - `gen_ai.agent.actual_output`: Output from CrewAI agent (treated as assistant message)
+
+   * The event timestamps are set based on attribute type:
+   * - Prompt and revised prompt: span.startTime
+   * - Completion and agent output: span.endTime
+   * 
+   * @param span The source ReadableSpan containing the attributes
+   * @param attributes Attributes to process
+   * @param eventTimestamp Optional timestamp to override span timestamps
+   * @returns {Event[]} Events created from OpenLit attributes
+   */
   private extractOpenlitSpanEventAttributes(
     span: ReadableSpan,
     attributes: Attributes,
     eventTimestamp: HrTime | undefined = undefined
   ): Event[] {
-    /*
-        Extract Gen AI Events from OpenLit direct attributes.
-
-        OpenLit uses direct key-value pairs for LLO attributes:
-        - `gen_ai.prompt`: Direct prompt text (treated as user message)
-        - `gen_ai.completion`: Direct completion text (treated as assistant message)
-        - `gen_ai.content.revised_prompt`: Revised prompt text (treated as system message)
-        - `gen_ai.agent.actual_output`: Output from CrewAI agent (treated as assistant message)
-
-        The event timestamps are set based on attribute type:
-        - Prompt and revised prompt: span.start_time
-        - Completion and agent output: span.end_time
-
-        Args:
-            span: The source ReadableSpan containing the attributes
-            attributes: Dictionary of attributes to process
-            eventTimestamp: Optional timestamp to override span timestamps
-
-        Returns:
-            Event[]: Events created from OpenLit attributes
-        */
     // Define the OpenLit attributes we're looking for
     const openlitKeys = {
       OPENLIT_PROMPT,
@@ -720,21 +677,6 @@ export class LLOHandler {
     const promptTimestamp = this.getTimestamp(span, eventTimestamp, true);
     const completionTimestamp = this.getTimestamp(span, eventTimestamp, false);
 
-    //[] let openlit_event_attrs = [
-    //     (OPENLIT_PROMPT, prompt_timestamp, ROLE_USER),  // Assume user role for direct prompts
-    //     (OPENLIT_COMPLETION, completion_timestamp, ROLE_ASSISTANT),  // Assume assistant role for completions
-    //     (OPENLIT_REVISED_PROMPT, prompt_timestamp, ROLE_SYSTEM),  // Assume system role for revised prompts
-    //     (
-    //         OPENLIT_AGENT_ACTUAL_OUTPUT,
-    //         completion_timestamp,
-    //         ROLE_ASSISTANT,
-    //     ),  // Assume assistant role for agent output
-    //     (
-    //         OPENLIT_AGENT_HUMAN_INPUT,
-    //         prompt_timestamp,
-    //         ROLE_USER,
-    //     ),  // Assume user role for agent human input
-    // ]
     const openlitEventAttrs = [
       {
         attrKey: OPENLIT_PROMPT,
@@ -781,45 +723,42 @@ export class LLOHandler {
     return events;
   }
 
+  /**
+   * Extract Gen AI Events from OpenInference attributes.
+   *
+   * OpenInference uses two patterns for LLO attributes:
+   * 1. Direct values:
+   *    - `input.value`: Direct input prompt (treated as user message)
+   *    - `output.value`: Direct output response (treated as assistant message)
+   *
+   * 2. Structured messages:
+   *    - `llm.input_messages.{n}.message.content`: Individual input messages
+   *    - `llm.input_messages.{n}.message.role`: Role for input message
+   *    - `llm.output_messages.{n}.message.content`: Individual output messages
+   *    - `llm.output_messages.{n}.message.role`: Role for output message
+   *
+   * The LLM model name is extracted from the `llm.model_name` attribute
+   * instead of `gen_ai.system` which other frameworks use.
+   *
+   * Event timestamps are set based on message type:
+   * - Input messages: span.startTime
+   * - Output messages: span.endTime
+   *
+   * @param span The source ReadableSpan containing the attributes
+   * @param attributes Attributes to process
+   * @param eventTimestamp Optional timestamp to override span timestamps
+   * @returns {Event[]} Events created from OpenInference attributes
+   */
   private extractOpeninferenceAttributes(
     span: ReadableSpan,
     attributes: Attributes,
     eventTimestamp: HrTime | undefined = undefined
   ): Event[] {
-    /*
-        Extract Gen AI Events from OpenInference attributes.
-
-        OpenInference uses two patterns for LLO attributes:
-        1. Direct values:
-           - `input.value`: Direct input prompt (treated as user message)
-           - `output.value`: Direct output response (treated as assistant message)
-
-        2. Structured messages:
-           - `llm.input_messages.{n}.message.content`: Individual input messages
-           - `llm.input_messages.{n}.message.role`: Role for input message
-           - `llm.output_messages.{n}.message.content`: Individual output messages
-           - `llm.output_messages.{n}.message.role`: Role for output message
-
-        The LLM model name is extracted from the `llm.model_name` attribute
-        instead of `gen_ai.system` which other frameworks use.
-
-        Event timestamps are set based on message type:
-        - Input messages: span.start_time
-        - Output messages: span.end_time
-
-        Args:
-            span: The source ReadableSpan containing the attributes
-            attributes: Dictionary of attributes to process
-            eventTimestamp: Optional timestamp to override span timestamps
-
-        Returns:
-            Event[]: Events created from OpenInference attributes
-        */
     // Define the OpenInference keys/patterns we're looking for
     const openinferenceDirectKeys = { OPENINFERENCE_INPUT_VALUE, OPENINFERENCE_OUTPUT_VALUE };
 
     // Quick check if any OpenInference attributes exist
-    // let has_direct_attrs = any(key in attributes for key in openinference_direct_keys)
+    //[] let has_direct_attrs = any(key in attributes for key in openinference_direct_keys)
     // let has_input_msgs = any(this.openinferenceInputMsgPattern.match(key) for key in attributes)
     // let has_output_msgs = any(this.openinferenceOutputMsgPattern.match(key) for key in attributes)
 
@@ -858,11 +797,6 @@ export class LLOHandler {
     const outputTimestamp = this.getTimestamp(span, eventTimestamp, false);
 
     // Process direct value attributes
-    //[] let openinference_direct_attrs = [
-    //     (OPENINFERENCE_INPUT_VALUE, input_timestamp, ROLE_USER),
-    //     (OPENINFERENCE_OUTPUT_VALUE, output_timestamp, ROLE_ASSISTANT),
-    // ]
-
     const openinferenceDirectAttrs = [
       { attrKey: OPENINFERENCE_INPUT_VALUE, timestamp: inputTimestamp, role: ROLE_USER },
       { attrKey: OPENINFERENCE_OUTPUT_VALUE, timestamp: outputTimestamp, role: ROLE_ASSISTANT },
@@ -937,17 +871,14 @@ export class LLOHandler {
     return events;
   }
 
+  /**
+   * Map a message role to the appropriate event name.
+   *
+   * @param role The role of the message (system, user, assistant, etc.)
+   * @param genAiSystem The gen_ai system identifier
+   * @returns {string} The appropriate event name for the given role
+   */
   private getEventNameForRole(role: AttributeValue, genAiSystem: AttributeValue): string {
-    /*
-        Map a message role to the appropriate event name.
-
-        Args:
-            role: The role of the message (system, user, assistant, etc.)
-            genAiSystem: The gen_ai system identifier
-
-        Returns:
-            string: The appropriate event name for the given role
-        */
     if (role === ROLE_SYSTEM) {
       return GEN_AI_SYSTEM_MESSAGE;
     } else if (role === ROLE_USER) {
@@ -959,18 +890,15 @@ export class LLOHandler {
     }
   }
 
+  /**
+   * Determine the appropriate timestamp to use for an event.
+   *
+   * @param span The source span
+   * @param eventTimestamp Optional override timestamp
+   * @param isInput Whether this is an input (true) or output (false) message
+   * @returns {number} The timestamp to use for the event
+   */
   private getTimestamp(span: ReadableSpan, eventTimestamp: HrTime | undefined, isInput: boolean): HrTime {
-    /*
-        Determine the appropriate timestamp to use for an event.
-
-        Args:
-            span: The source span
-            eventTimestamp: Optional override timestamp
-            isInput: Whether this is an input (true) or output (false) message
-
-        Returns:
-            number: The timestamp to use for the event
-        */
     if (eventTimestamp !== undefined) {
       return eventTimestamp;
     }
@@ -980,56 +908,42 @@ export class LLOHandler {
     } else {
       return span.endTime;
     }
-    //[] return span.start_time if is_input else span.end_time
+    //[] return span.startTime if is_input else span.endTime
   }
 
+  /**
+   * Create and return a Gen AI Event with the specified parameters.
+   *
+   * This helper method constructs a fully configured OpenTelemetry Event object
+   * that includes all necessary fields for proper event propagation and context.
+   *
+   * @param name Event type name (e.g., gen_ai.system.message, gen_ai.user.message)
+   * @param spanCtx Span context to extract trace/span IDs from
+   * @param timestamp Timestamp for the event (nanoseconds)
+   * @param attributes Additional attributes to include with the event
+   * @param data Event body containing content and role information
+   * @param span A ReadableSpan associated with the Span context
+   * @returns {Event}: A fully configured OpenTelemetry Gen AI Event object with proper trace context propagation
+   */
   private getGenAiEvent(
     name: string,
     spanCtx: SpanContext,
     timestamp: TimeInput,
     attributes: Attributes,
-    body: AnyValue,
+    data: AnyValue,
     span: ReadableSpan
   ): Event {
-    /*
-        Create and return a Gen AI Event with the specified parameters.
-
-        This helper method constructs a fully configured OpenTelemetry Event object
-        that includes all necessary fields for proper event propagation and context.
-
-        Args:
-            name: Event type name (e.g., gen_ai.system.message, gen_ai.user.message)
-            spanCtx: Span context to extract trace/span IDs from
-            timestamp: Timestamp for the event (nanoseconds)
-            attributes: Additional attributes to include with the event
-            body: Event body containing content and role information
-
-        Returns:
-            Event: A fully configured OpenTelemetry Gen AI Event object with
-                  proper trace context propagation
-        */
-
     //[]
     const customContext = ROOT_CONTEXT.setValue(SPAN_KEY, span);
 
+    //[]
     return {
       name: name,
       timestamp: timestamp,
       attributes: attributes,
-      data: body,
-      //[] severityNumber?: SeverityNumber,
+      data: data,
       context: customContext,
     };
-
-    //[] return Event(
-    //     name=name,
-    //     timestamp=timestamp,
-    //     attributes=attributes,
-    //     body=body,
-    //     trace_id=span_ctx.trace_id,
-    //     span_id=span_ctx.span_id,
-    //     trace_flags=span_ctx.trace_flags,
-    // )
   }
 }
 
