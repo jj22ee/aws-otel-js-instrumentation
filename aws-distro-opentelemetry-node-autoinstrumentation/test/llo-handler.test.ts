@@ -83,7 +83,6 @@ describe('LLOHandlerTest', () => {
     expect(lloHandler['loggerProvider']).toEqual(logger_provider_mock);
     expect(lloHandler['eventLoggerProvider']).toEqual(event_logger_provider_mock);
 
-    //[] event_logger_provider_mock.getEventLogger.assert_called_once_with("gen_ai.events")
     expect((event_logger_mock as EventLogger)['_logger']).toBe(logger_mock);
   });
 
@@ -376,25 +375,15 @@ describe('LLOHandlerTest', () => {
     expect(events.length).toEqual(4);
 
     // Get a map of original attributes to events
-    // let events_by_attr = {event.attributes["original_attribute"]: event for event in events}
     const events_by_attr: { [key: string]: api.Event } = Object.fromEntries(
       events.map(event => [event.attributes!['original_attribute'], event])
     );
-    // for (const event of events) {
-    //     events_by_attr[event.attributes["original_attribute"]]
-    // }
 
     // Check all expected attributes are present
     expect(events_by_attr['traceloop.entity.input']).toBeDefined();
     expect(events_by_attr['traceloop.entity.output']).toBeDefined();
     expect(events_by_attr['crewai.crew.tasks_output']).toBeDefined();
     expect(events_by_attr['crewai.crew.result']).toBeDefined();
-
-    //[]
-    // self.assertIn("traceloop.entity.input", events_by_attr)
-    // self.assertIn("traceloop.entity.output", events_by_attr)
-    // self.assertIn("crewai.crew.tasks_output", events_by_attr)
-    // self.assertIn("crewai.crew.result", events_by_attr)
 
     // Check standard Traceloop events
     const input_event = events_by_attr['traceloop.entity.input'];
@@ -494,7 +483,7 @@ describe('LLOHandlerTest', () => {
     expect(user_events.length).toEqual(2);
 
     // Check original attributes
-    const original_attrs = new Set(); //[]{event.attributes["original_attribute"] for event in events}
+    const original_attrs = new Set();
     events.forEach(event => {
       if (event.attributes) original_attrs.add(event.attributes['original_attribute']);
     });
@@ -647,14 +636,13 @@ describe('LLOHandlerTest', () => {
 
     // We don't need to check every detail since other tests do that,
     // but we can verify we got all the expected event types
-    //[] let event_types = {event.name for event in events}
     const event_types = new Set(events.map(event => event.name));
 
     expect(event_types.has('gen_ai.user.message')).toBeTruthy();
     expect(event_types.has('gen_ai.assistant.message')).toBeTruthy();
 
     // Verify original attributes were correctly captured
-    const original_attrs = new Set(); //[]{event.attributes["original_attribute"] for event in events}
+    const original_attrs = new Set();
     events.forEach(event => {
       if (event.attributes) original_attrs.add(event.attributes['original_attribute']);
     });
@@ -724,7 +712,6 @@ describe('LLOHandlerTest', () => {
     expect(events.length).toEqual(2);
 
     // Get a map of original attributes to their content
-    //[] let events_by_attr = {event.attributes["original_attribute"]: event for event in events}
     const events_by_attr: { [key: string]: api.Event } = Object.fromEntries(
       events.map(event => [event.attributes!['original_attribute'], event])
     );
@@ -769,7 +756,6 @@ describe('LLOHandlerTest', () => {
     expect(events.length).toEqual(2);
 
     // Get a map of original attributes to their content
-    //[] let events_by_attr = {event.attributes["original_attribute"]: event for event in events}
     const events_by_attr: { [key: string]: api.Event } = Object.fromEntries(
       events.map(event => [event.attributes!['original_attribute'], event])
     );
@@ -809,7 +795,6 @@ describe('LLOHandlerTest', () => {
     expect(events.length).toEqual(2);
 
     // Get a map of original attributes to their content
-    //[] let events_by_attr = {event.attributes["original_attribute"]: event for event in events}
     const events_by_attr: { [key: string]: api.Event } = Object.fromEntries(
       events.map(event => [event.attributes!['original_attribute'], event])
     );
@@ -844,16 +829,6 @@ describe('LLOHandlerTest', () => {
     const span = _create_mock_span(attributes);
     span.endTime = [1234567899, 0];
 
-    // with patch.object(lloHandler, "extractGenAiPromptEvents") as mock_extract_prompt, patch.object(
-    //     lloHandler, "extractGenAiCompletionEvents"
-    // ) as mock_extract_completion, patch.object(
-    //     lloHandler, "extractTraceloopEvents"
-    // ) as mock_extract_traceloop, patch.object(
-    //     lloHandler, "extractOpenlitSpanEventAttributes"
-    // ) as mock_extract_openlit, patch.object(
-    //     lloHandler, ["extractOpeninferenceAttributes"]"
-    // ) as mock_extract_openinference:
-
     // Create mocks with name attribute properly set
     const prompt_event: api.Event = {
       name: 'gen_ai.user.message',
@@ -882,12 +857,6 @@ describe('LLOHandlerTest', () => {
       .callsFake((span, attributes, eventTimestamp) => [openinference_event]);
 
     const event_logger_mockEmit = sinon.stub(event_logger_mock, 'emit').callsFake((event: api.Event) => {});
-
-    // mock_extract_prompt.return_value = [prompt_event]
-    // mock_extract_completion.return_value = [completion_event]
-    // mock_extract_traceloop.return_value = [traceloop_event]
-    // mock_extract_openlit.return_value = [openlit_event]
-    // mock_extract_openinference.return_value = [openinference_event]
 
     lloHandler['emitLloAttributes'](span, attributes);
 
@@ -926,12 +895,6 @@ describe('LLOHandlerTest', () => {
     expect(openinferenceAttributes).toBe(attributes);
     expect(openinferenceEventTimestamp).toBeUndefined();
 
-    // mock_extract_prompt.assert_called_once_with(span, attributes, None)
-    // mock_extract_completion.assert_called_once_with(span, attributes, None)
-    // mock_extract_traceloop.assert_called_once_with(span, attributes, None)
-    // mock_extract_openlit.assert_called_once_with(span, attributes, None)
-    // mock_extract_openinference.assert_called_once_with(span, attributes, None)
-
     const eventLoggerPromptCallArg = event_logger_mockEmit.getCall(0).args[0];
     const eventLoggerCompletionCallArg = event_logger_mockEmit.getCall(1).args[0];
     const eventLoggerTraceloopCallArg = event_logger_mockEmit.getCall(2).args[0];
@@ -943,16 +906,6 @@ describe('LLOHandlerTest', () => {
     expect(eventLoggerTraceloopCallArg).toBe(traceloop_event);
     expect(eventLoggerOpenlitCallArg).toBe(openlit_event);
     expect(eventLoggerOpeninferenceCallArg).toBe(openinference_event);
-
-    //[] self.event_logger_mock.emit.assert_has_calls(
-    //     [
-    //         call(prompt_event),
-    //         call(completion_event),
-    //         call(traceloop_event),
-    //         call(openlit_event),
-    //         call(openinference_event),
-    //     ]
-    // )
   });
 
   /**
@@ -963,18 +916,12 @@ describe('LLOHandlerTest', () => {
 
     const span = _create_mock_span(attributes);
 
-    // with patch.object(lloHandler, "_emit_llo_attributes") as mock_emit, patch.object(
-    //     lloHandler, "_filter_attributes"
-    // ) as mock_filter:
-
     const filtered_attributes: Attributes = { 'normal.attribute': 'normal value' };
 
     const lloHandlerEmitLloAttributes = sinon.stub(lloHandler, <any>'emitLloAttributes');
     const lloHandlerFilterAttributes = sinon
       .stub(lloHandler, <any>'filterAttributes')
       .callsFake(attributes => filtered_attributes);
-
-    // mock_filter.return_value = filtered_attributes
 
     const result = lloHandler.processSpans([span]);
 
@@ -985,12 +932,8 @@ describe('LLOHandlerTest', () => {
     expect(emitLloAttributesCallArg1).toBe(attributes);
     expect(emitLloAttributesCallArg2).toBe(undefined);
 
-    // mock_emit.assert_called_once_with(span, attributes)
-
     const filterAttributesCallArg0 = lloHandlerFilterAttributes.getCall(0).args[0];
     expect(filterAttributesCallArg0).toBe(attributes);
-
-    // mock_filter.assert_called_once_with(attributes)
 
     expect(result.length).toEqual(1);
     expect(result[0]).toEqual(span);
