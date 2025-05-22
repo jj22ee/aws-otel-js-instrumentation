@@ -1,5 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
+// Modifications Copyright The OpenTelemetry Authors. Licensed under the Apache License 2.0 License.
 
 import {
   diag,
@@ -57,17 +58,18 @@ const ROLE_SYSTEM = 'system';
 const ROLE_USER = 'user';
 const ROLE_ASSISTANT = 'assistant';
 
-const regexPatterns = [
-  new RegExp('^gen_ai\\.prompt\\.\\d+\\.content$'),
-  new RegExp('^gen_ai\\.completion\\.\\d+\\.content$'),
-  new RegExp('^llm\\.input_messages\\.\\d+\\.message\\.content$'),
-  new RegExp('^llm\\.output_messages\\.\\d+\\.message\\.content$'),
-];
-
+// Patterns used in extraction methods
 const promptContentPattern = new RegExp('^gen_ai\\.prompt\\.(\\d+)\\.content$');
 const completionContentPattern = new RegExp('^gen_ai\\.completion\\.(\\d+)\\.content$');
 const openinferenceInputMsgPattern = new RegExp('^llm\\.input_messages\\.(\\d+)\\.message\\.content$');
 const openinferenceOutputMsgPattern = new RegExp('^llm\\.output_messages\\.(\\d+)\\.message\\.content$');
+
+const regexPatterns = [
+  promptContentPattern,
+  completionContentPattern,
+  openinferenceInputMsgPattern,
+  openinferenceOutputMsgPattern,
+];
 
 interface PromptContent {
   key: string;
@@ -79,32 +81,32 @@ diag.setLogger(new DiagConsoleLogger(), opentelemetry.core.getEnv().OTEL_LOG_LEV
 
 /**
  * Utility class for handling Large Language Objects (LLO) in OpenTelemetry spans.
-
+ *
  * LLOHandler performs three primary functions:
  * 1. Identifies Large Language Objects (LLO) content in spans
  * 2. Extracts and transforms these attributes into OpenTelemetry Gen AI Events
  * 3. Filters LLO from spans to maintain privacy and reduce span size
-
+ *
  * Supported frameworks and their attribute patterns:
  * - Standard Gen AI:
  *   - gen_ai.prompt.{n}.content: Structured prompt content
  *   - gen_ai.prompt.{n}.role: Role for prompt content (system, user, assistant, etc.)
  *   - gen_ai.completion.{n}.content: Structured completion content
  *   - gen_ai.completion.{n}.role: Role for completion content (usually assistant)
-
+ *
  * - Traceloop:
  *   - traceloop.entity.input: Input text for LLM operations
  *   - traceloop.entity.output: Output text from LLM operations
  *   - traceloop.entity.name: Name of the entity processing the LLO
  *   - crewai.crew.tasks_output: Tasks output data from CrewAI (uses gen_ai.system if available)
  *   - crewai.crew.result: Final result from CrewAI crew (uses gen_ai.system if available)
-
+ *
  * - OpenLit:
  *   - gen_ai.prompt: Direct prompt text (treated as user message)
  *   - gen_ai.completion: Direct completion text (treated as assistant message)
  *   - gen_ai.content.revised_prompt: Revised prompt text (treated as system message)
  *   - gen_ai.agent.actual_output: Output from CrewAI agent (treated as assistant message)
-
+ *
  * - OpenInference:
  *   - input.value: Direct input prompt
  *   - output.value: Direct output response
@@ -118,20 +120,6 @@ export class LLOHandler {
   private loggerProvider: LoggerProvider;
   private eventLoggerProvider: EventLoggerProvider;
   private eventLogger: EventLogger;
-
-  //[] // Pre-compile regex patterns for better performance
-  // this.regexPatterns = [
-  //     re.compile(r"^gen_ai\.prompt\.\d+\.content$"),
-  //     re.compile(r"^gen_ai\.completion\.\d+\.content$"),
-  //     re.compile(r"^llm\.input_messages\.\d+\.message\.content$"),
-  //     re.compile(r"^llm\.output_messages\.\d+\.message\.content$"),
-  // ]
-
-  // // Additional pre-compiled patterns used in extraction methods
-  // this.promptContentPattern = re.compile(r"^gen_ai\.prompt\.(\d+)\.content$")
-  // this.completionContentPattern = re.compile(r"^gen_ai\.completion\.(\d+)\.content$")
-  // this.openinferenceInputMsgPattern = re.compile(r"^llm\.input_messages\.(\d+)\.message\.content$")
-  // this.openinferenceOutputMsgPattern = re.compile(r"^llm\.output_messages\.(\d+)\.message\.content$")
 
   /**
    * Initialize an LLOHandler with the specified logger provider.
@@ -174,16 +162,6 @@ export class LLOHandler {
       this.emitLloAttributes(span, span.attributes);
       const updatedAttributes = this.filterAttributes(span.attributes);
 
-      //[] if (isinstance(span.attributes, BoundedAttributes)) {
-      //     span.attributes = BoundedAttributes(
-      //         maxlen=span.attributes.maxlen,
-      //         attributes=updated_attributes,
-      //         immutable=span.attributes.immutable,
-      //         max_value_len=span.attributes.max_value_len,
-      //     )
-      // } else {
-      //     span.attributes = updated_attributes
-      // }
       const mutableSpan: Mutable<ReadableSpan> = span;
       mutableSpan.attributes = updatedAttributes;
 
@@ -233,7 +211,6 @@ export class LLOHandler {
         if (event.droppedAttributesCount) {
           updatedEvent.droppedAttributesCount = event.droppedAttributesCount;
         }
-
         if (updatedEventAttributes) {
           updatedEvent.attributes = updatedEventAttributes;
         }
@@ -294,7 +271,6 @@ export class LLOHandler {
     for (const event of allEvents) {
       this.eventLogger.emit(event);
       diag.debug(`Emitted Gen AI Event: ${event.name}`);
-      //[] logger.debug(f"Emitted Gen AI Event: {event.name}")
     }
   }
 
@@ -390,9 +366,6 @@ export class LLOHandler {
     eventTimestamp: HrTime | undefined = undefined
   ): Event[] {
     // Quick check if any prompt content attributes exist
-    //[] if (!any(this.promptContentPattern.match(key) for key in attributes)) {
-    //     return []
-    // }
     let promptContentPatternMatched: boolean = false;
     for (const key in attributes) {
       if (key.match(promptContentPattern)) {
@@ -460,9 +433,6 @@ export class LLOHandler {
     eventTimestamp: HrTime | undefined = undefined
   ): Event[] {
     // Quick check if any completion content attributes exist
-    //[] if (!any(this.completionContentPattern.match(key) for key in attributes)) {
-    //     return []
-    // }
     let completionContentPatternMatched: boolean = false;
     for (const key in attributes) {
       if (key.match(completionContentPattern)) {
@@ -494,7 +464,6 @@ export class LLOHandler {
     }
 
     // Create events for each content+role pair
-    //[] for (index, (key, value, role) in completion_content_matches.items()) {
     for (const { key, value, role } of completionContentMatches) {
       const eventAttributes = { 'gen_ai.system': genAiSystem, original_attribute: key };
       const body = { content: value, role: role };
@@ -544,9 +513,6 @@ export class LLOHandler {
     ];
 
     // Quick check if any Traceloop attributes exist
-    //[] if (!any(key in attributes for key in traceloop_keys)) {
-    //     return []
-    // }
     let traceloopAttributesExist: boolean = false;
     for (const key of traceloopKeys) {
       if (key in attributes) {
@@ -573,7 +539,6 @@ export class LLOHandler {
       { attrKey: TRACELOOP_ENTITY_OUTPUT, timestamp: outputTimestamp, role: ROLE_ASSISTANT }, // Treat output as assistant role
     ];
 
-    //[]
     for (const traceloopAttr of traceloopAttrs) {
       const { attrKey, timestamp, role } = traceloopAttr;
       if (attrKey in attributes) {
@@ -596,7 +561,6 @@ export class LLOHandler {
       { attrKey: TRACELOOP_CREW_RESULT, timestamp: outputTimestamp, role: ROLE_ASSISTANT },
     ];
 
-    //[]
     for (const crewaiAttr of crewaiAttrs) {
       const { attrKey, timestamp, role } = crewaiAttr;
       if (attrKey in attributes) {
@@ -646,9 +610,6 @@ export class LLOHandler {
     ];
 
     // Quick check if any OpenLit attributes exist
-    // if (!any(key in attributes for key in openlit_keys)) {
-    //     return []
-    // }
     let openlitAttributesExist: boolean = false;
     for (const key of openlitKeys) {
       if (key in attributes) {
@@ -696,7 +657,6 @@ export class LLOHandler {
       }, // Assume user role for agent human input
     ];
 
-    //[]
     for (const openlitEventAttr of openlitEventAttrs) {
       const { attrKey, timestamp, role } = openlitEventAttr;
       if (attrKey in attributes) {
@@ -749,10 +709,6 @@ export class LLOHandler {
     const openinferenceDirectKeys = [OPENINFERENCE_INPUT_VALUE, OPENINFERENCE_OUTPUT_VALUE];
 
     // Quick check if any OpenInference attributes exist
-    //[] let has_direct_attrs = any(key in attributes for key in openinference_direct_keys)
-    // let has_input_msgs = any(this.openinferenceInputMsgPattern.match(key) for key in attributes)
-    // let has_output_msgs = any(this.openinferenceOutputMsgPattern.match(key) for key in attributes)
-
     let hasDirectAttrs: boolean = false;
     for (const key of openinferenceDirectKeys) {
       if (key in attributes) {
@@ -774,7 +730,6 @@ export class LLOHandler {
         break;
       }
     }
-
     if (!(hasDirectAttrs || hasInputMsgs || hasOutputMsgs)) {
       return [];
     }
@@ -793,7 +748,6 @@ export class LLOHandler {
       { attrKey: OPENINFERENCE_OUTPUT_VALUE, timestamp: outputTimestamp, role: ROLE_ASSISTANT },
     ];
 
-    //[]
     for (const openinferenceDirectAttr of openinferenceDirectAttrs) {
       const { attrKey, timestamp, role } = openinferenceDirectAttr;
       if (attrKey in attributes) {
@@ -899,7 +853,6 @@ export class LLOHandler {
     } else {
       return span.endTime;
     }
-    //[] return span.startTime if is_input else span.endTime
   }
 
   /**
@@ -924,10 +877,14 @@ export class LLOHandler {
     data: AnyValue,
     span: ReadableSpan
   ): Event {
-    //[]
+    //[] Workaround to add a Context to an Event.
+    // This is needed because a ReadableSpan only provides its SpanContext,
+    // but does not provide access to the associated Context. An Event can
+    // have a Context, but not a SpanContext. Here we attempt to attach a
+    // custom Context that is associated to the ReadableSpan to mimic the
+    // ReadableSpan's actual Context.
     const customContext = ROOT_CONTEXT.setValue(SPAN_KEY, span);
 
-    //[]
     return {
       name: name,
       timestamp: timestamp,
