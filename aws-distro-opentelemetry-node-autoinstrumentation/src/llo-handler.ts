@@ -434,7 +434,7 @@ export class LLOHandler {
 
     // Create events for each content+role pair
     for (const { key, value, role } of promptContentMatches) {
-      const eventAttributes = { 'gen_ai.system': genAiSystem, "original_attribute": key };
+      const eventAttributes = { 'gen_ai.system': genAiSystem, original_attribute: key };
       const body = { content: value, role: role };
 
       // Use helper method to determine event name based on role
@@ -505,7 +505,7 @@ export class LLOHandler {
     // Create events for each content+role pair
     //[] for (index, (key, value, role) in completion_content_matches.items()) {
     for (const { key, value, role } of completionContentMatches) {
-      const eventAttributes = { 'gen_ai.system': genAiSystem, "original_attribute": key };
+      const eventAttributes = { 'gen_ai.system': genAiSystem, original_attribute: key };
       const body = { content: value, role: role };
 
       // Use helper method to determine event name based on role
@@ -586,7 +586,7 @@ export class LLOHandler {
     for (const traceloopAttr of traceloopAttrs) {
       const { attrKey, timestamp, role } = traceloopAttr;
       if (attrKey in attributes) {
-        const eventAttributes = { 'gen_ai.system': genAiSystem, "original_attribute": attrKey };
+        const eventAttributes = { 'gen_ai.system': genAiSystem, original_attribute: attrKey };
         const body = { content: attributes[attrKey], role: role };
 
         // Custom event name for Traceloop (always use system-specific format)
@@ -609,7 +609,7 @@ export class LLOHandler {
     for (const crewaiAttr of crewaiAttrs) {
       const { attrKey, timestamp, role } = crewaiAttr;
       if (attrKey in attributes) {
-        const eventAttributes = { 'gen_ai.system': crewaiGenAiSystem, "original_attribute": attrKey };
+        const eventAttributes = { 'gen_ai.system': crewaiGenAiSystem, original_attribute: attrKey };
         const body = { content: attributes[attrKey], role: role };
 
         // For CrewAI outputs, use the assistant message event
@@ -709,7 +709,7 @@ export class LLOHandler {
     for (const openlitEventAttr of openlitEventAttrs) {
       const { attrKey, timestamp, role } = openlitEventAttr;
       if (attrKey in attributes) {
-        const eventAttributes = { 'gen_ai.system': genAiSystem, "original_attribute": attrKey };
+        const eventAttributes = { 'gen_ai.system': genAiSystem, original_attribute: attrKey };
         const body = { content: attributes[attrKey], role: role };
 
         // Use helper method to determine event name based on role
@@ -755,7 +755,7 @@ export class LLOHandler {
     eventTimestamp: HrTime | undefined = undefined
   ): Event[] {
     // Define the OpenInference keys/patterns we're looking for
-    const openinferenceDirectKeys = [ OPENINFERENCE_INPUT_VALUE, OPENINFERENCE_OUTPUT_VALUE ];
+    const openinferenceDirectKeys = [OPENINFERENCE_INPUT_VALUE, OPENINFERENCE_OUTPUT_VALUE];
 
     // Quick check if any OpenInference attributes exist
     //[] let has_direct_attrs = any(key in attributes for key in openinference_direct_keys)
@@ -806,7 +806,7 @@ export class LLOHandler {
     for (const openinferenceDirectAttr of openinferenceDirectAttrs) {
       const { attrKey, timestamp, role } = openinferenceDirectAttr;
       if (attrKey in attributes) {
-        const eventAttributes = { 'gen_ai.system': genAiSystem, "original_attribute": attrKey };
+        const eventAttributes = { 'gen_ai.system': genAiSystem, original_attribute: attrKey };
         const body = { content: attributes[attrKey], role: role };
 
         // Use helper method to determine event name based on role
@@ -832,7 +832,7 @@ export class LLOHandler {
 
     // Create events for input messages
     for (const { key, value, role } of inputMessages) {
-      const eventAttributes = { 'gen_ai.system': genAiSystem, "original_attribute": key };
+      const eventAttributes = { 'gen_ai.system': genAiSystem, original_attribute: key };
       const body = { content: value, role: role };
 
       // Use helper method to determine event name based on role
@@ -857,7 +857,7 @@ export class LLOHandler {
 
     // Create events for output messages
     for (const { key, value, role } of outputMessages) {
-      const eventAttributes = { 'gen_ai.system': genAiSystem, "original_attribute": key };
+      const eventAttributes = { 'gen_ai.system': genAiSystem, original_attribute: key };
       const body = { content: value, role: role };
 
       // Use helper method to determine event name based on role
