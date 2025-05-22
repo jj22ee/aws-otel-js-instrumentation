@@ -940,4 +940,25 @@ describe('LLOHandlerTest', () => {
     // Access the attributes property that was set by the processSpans method
     expect(result[0].attributes).toEqual(filteredAttributes);
   });
+
+  /**
+   * Test processSpansEvents
+   */
+  it('testProcessSpanEvents', () => {
+    const span = createMockSpan({});
+    span.events = [
+      {
+        name: 'testEvent0',
+        time: [0, 1],
+        attributes: {
+          'traceloop.entity.input': 'testInput',
+          'traceloop.entity.output': 'testOutput',
+          'traceloop.entity.name': 'testName',
+        },
+      },
+    ];
+
+    lloHandler.processSpanEvents(span);
+    expect(span.events[0].attributes).toEqual({ 'traceloop.entity.name': 'testName' });
+  });
 });

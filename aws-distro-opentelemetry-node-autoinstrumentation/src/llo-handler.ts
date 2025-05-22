@@ -226,26 +226,17 @@ export class LLOHandler {
       const updatedEventAttributes = this.filterAttributes(event.attributes);
 
       if (Object.keys(updatedEventAttributes).length !== Object.keys(event.attributes).length) {
-        // let limit = undefined;
-        // if (isinstance(event.attributes, BoundedAttributes)) {
-        //     limit = event.attributes.maxlen
-        // }
-
         const updatedEvent: TimedEvent = {
           time: event.time,
           name: event.name,
         };
-
-        if (event.attributes) {
-          updatedEvent.attributes = event.attributes;
-        }
         if (event.droppedAttributesCount) {
           updatedEvent.droppedAttributesCount = event.droppedAttributesCount;
         }
 
-        //[] let updated_event = SpanEvent(
-        //     name=event.name, attributes=updated_event_attributes, timestamp=event.timestamp, limit=limit
-        // )
+        if (updatedEventAttributes) {
+          updatedEvent.attributes = updatedEventAttributes;
+        }
 
         updatedEvents.push(updatedEvent);
       } else {
