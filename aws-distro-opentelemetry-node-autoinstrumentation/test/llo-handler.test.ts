@@ -1,5 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
+
 import * as api from '@opentelemetry/api-events';
 import { Attributes, SpanContext, SpanKind } from '@opentelemetry/api';
 import { Resource } from '@opentelemetry/resources';
@@ -13,23 +14,23 @@ import * as sinon from 'sinon';
 import { Mutable } from '../src/utils';
 
 describe('LLOHandlerTest', () => {
-  const logger_mock: Logger = {
+  const loggerMock: Logger = {
     emit: (logRecord: LogRecord) => {},
   };
-  let logger_provider_mock: LoggerProvider;
-  let event_logger_mock: api.EventLogger;
-  let event_logger_provider_mock: EventLoggerProvider;
+  let loggerProviderMock: LoggerProvider;
+  let eventLoggerMock: api.EventLogger;
+  let eventLoggerProviderMock: EventLoggerProvider;
   let lloHandler: LLOHandler;
 
   before(() => {
-    logger_provider_mock = new LoggerProvider();
-    logger_provider_mock.getLogger = (name: string, version?: string, options?: LoggerOptions) => {
-      return logger_mock;
+    loggerProviderMock = new LoggerProvider();
+    loggerProviderMock.getLogger = (name: string, version?: string, options?: LoggerOptions) => {
+      return loggerMock;
     };
 
-    lloHandler = new LLOHandler(logger_provider_mock);
-    event_logger_provider_mock = lloHandler['eventLoggerProvider'];
-    event_logger_mock = lloHandler['eventLogger'];
+    lloHandler = new LLOHandler(loggerProviderMock);
+    eventLoggerProviderMock = lloHandler['eventLoggerProvider'];
+    eventLoggerMock = lloHandler['eventLogger'];
   });
 
   afterEach(() => {
@@ -39,7 +40,7 @@ describe('LLOHandlerTest', () => {
   /**
    * Helper method to create a mock span with given attributes
    */
-  function _create_mock_span(
+  function createMockSpan(
     attributes: Attributes | undefined = undefined,
     kind: SpanKind = SpanKind.INTERNAL
   ): Mutable<ReadableSpan> {
@@ -79,43 +80,43 @@ describe('LLOHandlerTest', () => {
   /**
    * Test initialization of LLOHandler
    */
-  it('test_init', () => {
-    expect(lloHandler['loggerProvider']).toEqual(logger_provider_mock);
-    expect(lloHandler['eventLoggerProvider']).toEqual(event_logger_provider_mock);
+  it('testInit', () => {
+    expect(lloHandler['loggerProvider']).toEqual(loggerProviderMock);
+    expect(lloHandler['eventLoggerProvider']).toEqual(eventLoggerProviderMock);
 
-    expect((event_logger_mock as EventLogger)['_logger']).toBe(logger_mock);
+    expect((eventLoggerMock as EventLogger)['_logger']).toBe(loggerMock);
   });
 
   /**
-   * Test _is_llo_attribute method with matching patterns
+   * Test isLloAttribute method with matching patterns
    */
-  it('test_is_llo_attribute_match', () => {
+  it('testIsLloAttributeMatch', () => {
     expect(lloHandler['isLloAttribute']('gen_ai.prompt.0.content')).toBeTruthy();
     expect(lloHandler['isLloAttribute']('gen_ai.prompt.123.content')).toBeTruthy();
   });
 
   /**
-   * Test _is_llo_attribute method with non-matching patterns
+   * Test isLloAttribute method with non-matching patterns
    */
-  it('test_is_llo_attribute_no_match', () => {
+  it('testIsLloAttributeNoMatch', () => {
     expect(lloHandler['isLloAttribute']('gen_ai.prompt.content')).toBeFalsy();
     expect(lloHandler['isLloAttribute']('gen_ai.prompt.abc.content')).toBeFalsy();
     expect(lloHandler['isLloAttribute']('some.other.attribute')).toBeFalsy();
   });
 
   /**
-   * Test _is_llo_attribute method with Traceloop patterns
+   * Test isLloAttribute method with Traceloop patterns
    */
-  it('test_is_llo_attribute_traceloop_match', () => {
+  it('testIsLloAttributeTraceloopMatch', () => {
     // Test exact matches for Traceloop attributes
     expect(lloHandler['isLloAttribute']('traceloop.entity.input')).toBeTruthy();
     expect(lloHandler['isLloAttribute']('traceloop.entity.output')).toBeTruthy();
   });
 
   /**
-   * Test _is_llo_attribute method with OpenLit patterns
+   * Test isLloAttribute method with OpenLit patterns
    */
-  it('test_is_llo_attribute_openlit_match', () => {
+  it('testIsLloAttributeOpenlitMatch', () => {
     // Test exact matches for direct OpenLit attributes
     expect(lloHandler['isLloAttribute']('gen_ai.prompt')).toBeTruthy();
     expect(lloHandler['isLloAttribute']('gen_ai.completion')).toBeTruthy();
@@ -123,9 +124,9 @@ describe('LLOHandlerTest', () => {
   });
 
   /**
-   * Test _is_llo_attribute method with OpenInference patterns
+   * Test isLloAttribute method with OpenInference patterns
    */
-  it('test_is_llo_attribute_openinference_match', () => {
+  it('testIsLloAttributeOpeninferenceMatch', () => {
     // Test exact matches
     expect(lloHandler['isLloAttribute']('input.value')).toBeTruthy();
     expect(lloHandler['isLloAttribute']('output.value')).toBeTruthy();
@@ -136,9 +137,9 @@ describe('LLOHandlerTest', () => {
   });
 
   /**
-   * Test _is_llo_attribute method with CrewAI patterns
+   * Test isLloAttribute method with CrewAI patterns
    */
-  it('test_is_llo_attribute_crewai_match', () => {
+  it('testIsLloAttributeCrewaiMatch', () => {
     // Test exact match for CrewAI attributes (handled by Traceloop and OpenLit)
     expect(lloHandler['isLloAttribute']('gen_ai.agent.actual_output')).toBeTruthy();
     expect(lloHandler['isLloAttribute']('gen_ai.agent.human_input')).toBeTruthy();
@@ -147,9 +148,9 @@ describe('LLOHandlerTest', () => {
   });
 
   /**
-   * Test _filter_attributes method
+   * Test filterAttributes method
    */
-  it('test_filter_attributes', () => {
+  it('testFilterAttributes', () => {
     const attributes = {
       'gen_ai.prompt.0.content': 'test content',
       'gen_ai.prompt.0.role': 'user',
@@ -168,14 +169,14 @@ describe('LLOHandlerTest', () => {
   /**
    * Test extractGenAiPromptEvents with system role
    */
-  it('testextractGenAiPromptEvents_system_role', () => {
+  it('testextractGenAiPromptEventsSystemRole', () => {
     const attributes = {
       'gen_ai.prompt.0.content': 'system instruction',
       'gen_ai.prompt.0.role': 'system',
       'gen_ai.system': 'openai',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
 
     const events = lloHandler['extractGenAiPromptEvents'](span, attributes);
 
@@ -191,14 +192,14 @@ describe('LLOHandlerTest', () => {
   /**
    * Test extractGenAiPromptEvents with user role
    */
-  it('testextractGenAiPromptEvents_user_role', () => {
+  it('testextractGenAiPromptEventsUserRole', () => {
     const attributes = {
       'gen_ai.prompt.0.content': 'user question',
       'gen_ai.prompt.0.role': 'user',
       'gen_ai.system': 'anthropic',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
 
     const events = lloHandler['extractGenAiPromptEvents'](span, attributes);
 
@@ -214,14 +215,14 @@ describe('LLOHandlerTest', () => {
   /**
    * Test extractGenAiPromptEvents with assistant role
    */
-  it('testextractGenAiPromptEvents_assistant_role', () => {
+  it('testextractGenAiPromptEventsAssistantRole', () => {
     const attributes = {
       'gen_ai.prompt.1.content': 'assistant response',
       'gen_ai.prompt.1.role': 'assistant',
       'gen_ai.system': 'anthropic',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
 
     const events = lloHandler['extractGenAiPromptEvents'](span, attributes);
 
@@ -237,14 +238,14 @@ describe('LLOHandlerTest', () => {
   /**
    * Test extractGenAiPromptEvents with function role
    */
-  it('testextractGenAiPromptEvents_function_role', () => {
+  it('testextractGenAiPromptEventsFunctionRole', () => {
     const attributes = {
       'gen_ai.prompt.2.content': 'function data',
       'gen_ai.prompt.2.role': 'function',
       'gen_ai.system': 'openai',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
     const events = lloHandler['extractGenAiPromptEvents'](span, attributes);
 
     expect(events.length).toEqual(1);
@@ -259,14 +260,14 @@ describe('LLOHandlerTest', () => {
   /**
    * Test extractGenAiPromptEvents with unknown role
    */
-  it('testextractGenAiPromptEvents_unknown_role', () => {
+  it('testextractGenAiPromptEventsUnknownRole', () => {
     const attributes = {
       'gen_ai.prompt.3.content': 'unknown type content',
       'gen_ai.prompt.3.role': 'unknown',
       'gen_ai.system': 'bedrock',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
     const events = lloHandler['extractGenAiPromptEvents'](span, attributes);
 
     expect(events.length).toEqual(1);
@@ -280,14 +281,14 @@ describe('LLOHandlerTest', () => {
   /**
    * Test extractGenAiCompletionEvents with assistant role
    */
-  it('testextractGenAiCompletionEvents_assistant_role', () => {
+  it('testextractGenAiCompletionEventsAssistantRole', () => {
     const attributes = {
       'gen_ai.completion.0.content': 'assistant completion',
       'gen_ai.completion.0.role': 'assistant',
       'gen_ai.system': 'openai',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
     span.endTime = [1234567899, 0]; // end time for completion events
 
     const events = lloHandler['extractGenAiCompletionEvents'](span, attributes);
@@ -304,14 +305,14 @@ describe('LLOHandlerTest', () => {
   /**
    * Test extractGenAiCompletionEvents with non-assistant role
    */
-  it('testextractGenAiCompletionEvents_other_role', () => {
+  it('testextractGenAiCompletionEventsOtherRole', () => {
     const attributes = {
       'gen_ai.completion.1.content': 'other completion',
       'gen_ai.completion.1.role': 'other',
       'gen_ai.system': 'anthropic',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
     span.endTime = [1234567899, 0];
 
     const events = lloHandler['extractGenAiCompletionEvents'](span, attributes);
@@ -333,32 +334,32 @@ describe('LLOHandlerTest', () => {
       'traceloop.entity.name': 'my_entity',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
     span.endTime = [1234567899, 0];
 
     const events = lloHandler['extractTraceloopEvents'](span, attributes);
 
     expect(events.length).toEqual(2);
 
-    const input_event = events[0];
-    expect(input_event.name).toEqual('gen_ai.my_entity.message');
-    expect((input_event.data as any)['content']).toEqual('input data');
-    expect(input_event.attributes!['gen_ai.system']).toEqual('my_entity');
-    expect(input_event.attributes!['original_attribute']).toEqual('traceloop.entity.input');
-    expect(input_event.timestamp).toEqual([1234567890, 0]); // start_time
+    const inputEvent = events[0];
+    expect(inputEvent.name).toEqual('gen_ai.my_entity.message');
+    expect((inputEvent.data as any)['content']).toEqual('input data');
+    expect(inputEvent.attributes!['gen_ai.system']).toEqual('my_entity');
+    expect(inputEvent.attributes!['original_attribute']).toEqual('traceloop.entity.input');
+    expect(inputEvent.timestamp).toEqual([1234567890, 0]); // startTime
 
-    const output_event = events[1];
-    expect(output_event.name).toEqual('gen_ai.my_entity.message');
-    expect((output_event.data as any)['content']).toEqual('output data');
-    expect(output_event.attributes!['gen_ai.system']).toEqual('my_entity');
-    expect(output_event.attributes!['original_attribute']).toEqual('traceloop.entity.output');
-    expect(output_event.timestamp).toEqual([1234567899, 0]); // endTime
+    const outputEvent = events[1];
+    expect(outputEvent.name).toEqual('gen_ai.my_entity.message');
+    expect((outputEvent.data as any)['content']).toEqual('output data');
+    expect(outputEvent.attributes!['gen_ai.system']).toEqual('my_entity');
+    expect(outputEvent.attributes!['original_attribute']).toEqual('traceloop.entity.output');
+    expect(outputEvent.timestamp).toEqual([1234567899, 0]); // endTime
   });
 
   /**
    * Test extractTraceloopEvents with all Traceloop attributes including CrewAI outputs
    */
-  it('test_extract_traceloop_all_attributes', () => {
+  it('testExtractTraceloopAllAttributes', () => {
     const attributes = {
       'traceloop.entity.input': 'input data',
       'traceloop.entity.output': 'output data',
@@ -367,7 +368,7 @@ describe('LLOHandlerTest', () => {
       'traceloop.entity.name': 'crewai_agent',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
     span.endTime = [1234567899, 0];
 
     const events = lloHandler['extractTraceloopEvents'](span, attributes);
@@ -375,42 +376,42 @@ describe('LLOHandlerTest', () => {
     expect(events.length).toEqual(4);
 
     // Get a map of original attributes to events
-    const events_by_attr: { [key: string]: api.Event } = Object.fromEntries(
+    const eventsByAttr: { [key: string]: api.Event } = Object.fromEntries(
       events.map(event => [event.attributes!['original_attribute'], event])
     );
 
     // Check all expected attributes are present
-    expect(events_by_attr['traceloop.entity.input']).toBeDefined();
-    expect(events_by_attr['traceloop.entity.output']).toBeDefined();
-    expect(events_by_attr['crewai.crew.tasks_output']).toBeDefined();
-    expect(events_by_attr['crewai.crew.result']).toBeDefined();
+    expect(eventsByAttr['traceloop.entity.input']).toBeDefined();
+    expect(eventsByAttr['traceloop.entity.output']).toBeDefined();
+    expect(eventsByAttr['crewai.crew.tasks_output']).toBeDefined();
+    expect(eventsByAttr['crewai.crew.result']).toBeDefined();
 
     // Check standard Traceloop events
-    const input_event = events_by_attr['traceloop.entity.input'];
-    expect(input_event.name).toEqual('gen_ai.crewai_agent.message');
-    expect((input_event.data as any)['role']).toEqual('user');
+    const inputEvent = eventsByAttr['traceloop.entity.input'];
+    expect(inputEvent.name).toEqual('gen_ai.crewai_agent.message');
+    expect((inputEvent.data as any)['role']).toEqual('user');
 
-    const output_event = events_by_attr['traceloop.entity.output'];
-    expect(output_event.name).toEqual('gen_ai.crewai_agent.message');
-    expect((output_event.data as any)['role']).toEqual('assistant');
+    const outputEvent = eventsByAttr['traceloop.entity.output'];
+    expect(outputEvent.name).toEqual('gen_ai.crewai_agent.message');
+    expect((outputEvent.data as any)['role']).toEqual('assistant');
 
     // Check CrewAI events
-    const tasks_event = events_by_attr['crewai.crew.tasks_output'];
-    expect(tasks_event.name).toEqual('gen_ai.assistant.message');
-    expect((tasks_event.data as any)['role']).toEqual('assistant');
+    const tasksEvent = eventsByAttr['crewai.crew.tasks_output'];
+    expect(tasksEvent.name).toEqual('gen_ai.assistant.message');
+    expect((tasksEvent.data as any)['role']).toEqual('assistant');
 
-    const result_event = events_by_attr['crewai.crew.result'];
-    expect(result_event.name).toEqual('gen_ai.assistant.message');
-    expect((result_event.data as any)['role']).toEqual('assistant');
+    const resultEvent = eventsByAttr['crewai.crew.result'];
+    expect(resultEvent.name).toEqual('gen_ai.assistant.message');
+    expect((resultEvent.data as any)['role']).toEqual('assistant');
   });
 
   /**
    * Test extractOpenlitSpanEventAttributes with direct prompt attribute
    */
-  it('test_extract_openlit_direct_prompt', () => {
+  it('testExtractOpenlitDirectPrompt', () => {
     const attributes = { 'gen_ai.prompt': 'user direct prompt', 'gen_ai.system': 'openlit' };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
 
     const events = lloHandler['extractOpenlitSpanEventAttributes'](span, attributes);
 
@@ -421,16 +422,16 @@ describe('LLOHandlerTest', () => {
     expect((event as any).data['role']).toEqual('user');
     expect(event.attributes!['gen_ai.system']).toEqual('openlit');
     expect(event.attributes!['original_attribute']).toEqual('gen_ai.prompt');
-    expect(event.timestamp).toEqual([1234567890, 0]); // start_time
+    expect(event.timestamp).toEqual([1234567890, 0]); // startTime
   });
 
   /**
    * Test extractOpenlitSpanEventAttributes with direct completion attribute
    */
-  it('test_extract_openlit_direct_completion', () => {
+  it('testExtractOpenlitDirectCompletion', () => {
     const attributes = { 'gen_ai.completion': 'assistant direct completion', 'gen_ai.system': 'openlit' };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
     span.endTime = [1234567899, 0];
 
     const events = lloHandler['extractOpenlitSpanEventAttributes'](span, attributes);
@@ -448,7 +449,7 @@ describe('LLOHandlerTest', () => {
   /**
    * Test extractOpenlitSpanEventAttributes with all OpenLit attributes
    */
-  it('test_extract_openlit_all_attributes', () => {
+  it('testExtractOpenlitAllAttributes', () => {
     const attributes = {
       'gen_ai.prompt': 'user prompt',
       'gen_ai.completion': 'assistant response',
@@ -458,7 +459,7 @@ describe('LLOHandlerTest', () => {
       'gen_ai.system': 'langchain',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
     span.endTime = [1234567899, 0];
 
     const events = lloHandler['extractOpenlitSpanEventAttributes'](span, attributes);
@@ -471,37 +472,36 @@ describe('LLOHandlerTest', () => {
     }
 
     // Check we have the expected event types
-    const event_types: Set<string> = new Set(events.map(event => event.name));
+    const eventTypes: Set<string> = new Set(events.map(event => event.name));
 
-    expect(event_types.has('gen_ai.user.message')).toBeTruthy();
-    expect(event_types.has('gen_ai.assistant.message')).toBeTruthy();
-    expect(event_types.has('gen_ai.system.message')).toBeTruthy();
+    expect(eventTypes.has('gen_ai.user.message')).toBeTruthy();
+    expect(eventTypes.has('gen_ai.assistant.message')).toBeTruthy();
+    expect(eventTypes.has('gen_ai.system.message')).toBeTruthy();
 
     // Verify counts of user messages (should be 2 - prompt and human input)
-    // let user_events = [e for e in events if e.name == "gen_ai.user.message"]
-    const user_events = events.filter(event => event.name === 'gen_ai.user.message');
-    expect(user_events.length).toEqual(2);
+    const userEvents = events.filter(event => event.name === 'gen_ai.user.message');
+    expect(userEvents.length).toEqual(2);
 
     // Check original attributes
-    const original_attrs = new Set();
+    const originalAttrs = new Set();
     events.forEach(event => {
-      if (event.attributes) original_attrs.add(event.attributes['original_attribute']);
+      if (event.attributes) originalAttrs.add(event.attributes['original_attribute']);
     });
 
-    expect(original_attrs.has('gen_ai.prompt')).toBeTruthy();
-    expect(original_attrs.has('gen_ai.completion')).toBeTruthy();
-    expect(original_attrs.has('gen_ai.content.revised_prompt')).toBeTruthy();
-    expect(original_attrs.has('gen_ai.agent.actual_output')).toBeTruthy();
-    expect(original_attrs.has('gen_ai.agent.human_input')).toBeTruthy();
+    expect(originalAttrs.has('gen_ai.prompt')).toBeTruthy();
+    expect(originalAttrs.has('gen_ai.completion')).toBeTruthy();
+    expect(originalAttrs.has('gen_ai.content.revised_prompt')).toBeTruthy();
+    expect(originalAttrs.has('gen_ai.agent.actual_output')).toBeTruthy();
+    expect(originalAttrs.has('gen_ai.agent.human_input')).toBeTruthy();
   });
 
   /**
    * Test extractOpenlitSpanEventAttributes with revised prompt attribute
    */
-  it('test_extract_openlit_revised_prompt', () => {
+  it('testExtractOpenlitRevisedPrompt', () => {
     const attributes = { 'gen_ai.content.revised_prompt': 'revised system prompt', 'gen_ai.system': 'openlit' };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
 
     const events = lloHandler['extractOpenlitSpanEventAttributes'](span, attributes);
 
@@ -512,47 +512,47 @@ describe('LLOHandlerTest', () => {
     expect((event as any).data['role']).toEqual('system');
     expect(event.attributes!['gen_ai.system']).toEqual('openlit');
     expect(event.attributes!['original_attribute']).toEqual('gen_ai.content.revised_prompt');
-    expect(event.timestamp).toEqual([1234567890, 0]); // start_time
+    expect(event.timestamp).toEqual([1234567890, 0]); // startTime
   });
 
   /**
-   * Test["extractOpeninferenceAttributes"] with direct input/output values
+   * Test extractOpeninferenceAttributes with direct input/output values
    */
-  it('test_extract_openinference_direct_attributes', () => {
+  it('testExtractOpeninferenceDirectAttributes', () => {
     const attributes = {
       'input.value': 'user prompt',
       'output.value': 'assistant response',
       'llm.model_name': 'gpt-4',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
     span.endTime = [1234567899, 0];
 
     const events = lloHandler['extractOpeninferenceAttributes'](span, attributes);
 
     expect(events.length).toEqual(2);
 
-    const input_event = events[0];
-    expect(input_event.name).toEqual('gen_ai.user.message');
-    expect((input_event.data as any)['content']).toEqual('user prompt');
-    expect((input_event.data as any)['role']).toEqual('user');
-    expect(input_event.attributes!['gen_ai.system']).toEqual('gpt-4');
-    expect(input_event.attributes!['original_attribute']).toEqual('input.value');
-    expect(input_event.timestamp).toEqual([1234567890, 0]); // start_time
+    const inputEvent = events[0];
+    expect(inputEvent.name).toEqual('gen_ai.user.message');
+    expect((inputEvent.data as any)['content']).toEqual('user prompt');
+    expect((inputEvent.data as any)['role']).toEqual('user');
+    expect(inputEvent.attributes!['gen_ai.system']).toEqual('gpt-4');
+    expect(inputEvent.attributes!['original_attribute']).toEqual('input.value');
+    expect(inputEvent.timestamp).toEqual([1234567890, 0]); // startTime
 
-    const output_event = events[1];
-    expect(output_event.name).toEqual('gen_ai.assistant.message');
-    expect((output_event.data as any)['content']).toEqual('assistant response');
-    expect((output_event.data as any)['role']).toEqual('assistant');
-    expect(output_event.attributes!['gen_ai.system']).toEqual('gpt-4');
-    expect(output_event.attributes!['original_attribute']).toEqual('output.value');
-    expect(output_event.timestamp).toEqual([1234567899, 0]); // endTime
+    const outputEvent = events[1];
+    expect(outputEvent.name).toEqual('gen_ai.assistant.message');
+    expect((outputEvent.data as any)['content']).toEqual('assistant response');
+    expect((outputEvent.data as any)['role']).toEqual('assistant');
+    expect(outputEvent.attributes!['gen_ai.system']).toEqual('gpt-4');
+    expect(outputEvent.attributes!['original_attribute']).toEqual('output.value');
+    expect(outputEvent.timestamp).toEqual([1234567899, 0]); // endTime
   });
 
   /**
-   * Test["extractOpeninferenceAttributes"] with structured input messages
+   * Test extractOpeninferenceAttributes with structured input messages
    */
-  it('test_extract_openinference_structured_input_messages', () => {
+  it('testExtractOpeninferenceStructuredInputMessages', () => {
     const attributes = {
       'llm.input_messages.0.message.content': 'system prompt',
       'llm.input_messages.0.message.role': 'system',
@@ -561,57 +561,57 @@ describe('LLOHandlerTest', () => {
       'llm.model_name': 'claude-3',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
 
     const events = lloHandler['extractOpeninferenceAttributes'](span, attributes);
 
     expect(events.length).toEqual(2);
 
-    const system_event = events[0];
-    expect(system_event.name).toEqual('gen_ai.system.message');
-    expect((system_event.data as any)['content']).toEqual('system prompt');
-    expect((system_event.data as any)['role']).toEqual('system');
-    expect(system_event.attributes!['gen_ai.system']).toEqual('claude-3');
-    expect(system_event.attributes!['original_attribute']).toEqual('llm.input_messages.0.message.content');
+    const systemEvent = events[0];
+    expect(systemEvent.name).toEqual('gen_ai.system.message');
+    expect((systemEvent.data as any)['content']).toEqual('system prompt');
+    expect((systemEvent.data as any)['role']).toEqual('system');
+    expect(systemEvent.attributes!['gen_ai.system']).toEqual('claude-3');
+    expect(systemEvent.attributes!['original_attribute']).toEqual('llm.input_messages.0.message.content');
 
-    const user_event = events[1];
-    expect(user_event.name).toEqual('gen_ai.user.message');
-    expect((user_event.data as any)['content']).toEqual('user message');
-    expect((user_event.data as any)['role']).toEqual('user');
-    expect(user_event.attributes!['gen_ai.system']).toEqual('claude-3');
-    expect(user_event.attributes!['original_attribute']).toEqual('llm.input_messages.1.message.content');
+    const userEvent = events[1];
+    expect(userEvent.name).toEqual('gen_ai.user.message');
+    expect((userEvent.data as any)['content']).toEqual('user message');
+    expect((userEvent.data as any)['role']).toEqual('user');
+    expect(userEvent.attributes!['gen_ai.system']).toEqual('claude-3');
+    expect(userEvent.attributes!['original_attribute']).toEqual('llm.input_messages.1.message.content');
   });
 
   /**
-   * Test["extractOpeninferenceAttributes"] with structured output messages
+   * Test extractOpeninferenceAttributes with structured output messages
    */
-  it('test_extract_openinference_structured_output_messages', () => {
+  it('testExtractOpeninferenceStructuredOutputMessages', () => {
     const attributes = {
       'llm.output_messages.0.message.content': 'assistant response',
       'llm.output_messages.0.message.role': 'assistant',
       'llm.model_name': 'llama-3',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
     span.endTime = [1234567899, 0];
 
     const events = lloHandler['extractOpeninferenceAttributes'](span, attributes);
 
     expect(events.length).toEqual(1);
 
-    const output_event = events[0];
-    expect(output_event.name).toEqual('gen_ai.assistant.message');
-    expect((output_event.data as any)['content']).toEqual('assistant response');
-    expect((output_event.data as any)['role']).toEqual('assistant');
-    expect(output_event.attributes!['gen_ai.system']).toEqual('llama-3');
-    expect(output_event.attributes!['original_attribute']).toEqual('llm.output_messages.0.message.content');
-    expect(output_event.timestamp).toEqual([1234567899, 0]); // endTime
+    const outputEvent = events[0];
+    expect(outputEvent.name).toEqual('gen_ai.assistant.message');
+    expect((outputEvent.data as any)['content']).toEqual('assistant response');
+    expect((outputEvent.data as any)['role']).toEqual('assistant');
+    expect(outputEvent.attributes!['gen_ai.system']).toEqual('llama-3');
+    expect(outputEvent.attributes!['original_attribute']).toEqual('llm.output_messages.0.message.content');
+    expect(outputEvent.timestamp).toEqual([1234567899, 0]); // endTime
   });
 
   /**
-   * Test["extractOpeninferenceAttributes"] with a mix of all attribute types
+   * Test extractOpeninferenceAttributes with a mix of all attribute types
    */
-  it('test_extract_openinference_mixed_attributes', () => {
+  it('testExtractOpeninferenceMixedAttributes', () => {
     const attributes = {
       'input.value': 'direct input',
       'output.value': 'direct output',
@@ -622,7 +622,7 @@ describe('LLOHandlerTest', () => {
       'llm.model_name': 'bedrock.claude-3',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
     span.endTime = [1234567899, 0];
 
     const events = lloHandler['extractOpeninferenceAttributes'](span, attributes);
@@ -636,29 +636,29 @@ describe('LLOHandlerTest', () => {
 
     // We don't need to check every detail since other tests do that,
     // but we can verify we got all the expected event types
-    const event_types = new Set(events.map(event => event.name));
+    const eventTypes = new Set(events.map(event => event.name));
 
-    expect(event_types.has('gen_ai.user.message')).toBeTruthy();
-    expect(event_types.has('gen_ai.assistant.message')).toBeTruthy();
+    expect(eventTypes.has('gen_ai.user.message')).toBeTruthy();
+    expect(eventTypes.has('gen_ai.assistant.message')).toBeTruthy();
 
     // Verify original attributes were correctly captured
-    const original_attrs = new Set();
+    const originalAttrs = new Set();
     events.forEach(event => {
-      if (event.attributes) original_attrs.add(event.attributes['original_attribute']);
+      if (event.attributes) originalAttrs.add(event.attributes['original_attribute']);
     });
-    expect(original_attrs.has('input.value')).toBeTruthy();
-    expect(original_attrs.has('output.value')).toBeTruthy();
-    expect(original_attrs.has('llm.input_messages.0.message.content')).toBeTruthy();
-    expect(original_attrs.has('llm.output_messages.0.message.content')).toBeTruthy();
+    expect(originalAttrs.has('input.value')).toBeTruthy();
+    expect(originalAttrs.has('output.value')).toBeTruthy();
+    expect(originalAttrs.has('llm.input_messages.0.message.content')).toBeTruthy();
+    expect(originalAttrs.has('llm.output_messages.0.message.content')).toBeTruthy();
   });
 
   /**
    * Test extractOpenlitSpanEventAttributes with agent actual output attribute
    */
-  it('test_extract_openlit_agent_actual_output', () => {
+  it('testExtractOpenlitAgentActualOutput', () => {
     const attributes = { 'gen_ai.agent.actual_output': 'Agent task output result', 'gen_ai.system': 'crewai' };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
     span.endTime = [1234567899, 0];
 
     const events = lloHandler['extractOpenlitSpanEventAttributes'](span, attributes);
@@ -677,10 +677,10 @@ describe('LLOHandlerTest', () => {
   /**
    * Test extractOpenlitSpanEventAttributes with agent human input attribute
    */
-  it('test_extract_openlit_agent_human_input', () => {
+  it('testExtractOpenlitAgentHumanInput', () => {
     const attributes = { 'gen_ai.agent.human_input': 'Human input to the agent', 'gen_ai.system': 'crewai' };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
 
     const events = lloHandler['extractOpenlitSpanEventAttributes'](span, attributes);
 
@@ -691,20 +691,20 @@ describe('LLOHandlerTest', () => {
     expect((event as any).data['role']).toEqual('user');
     expect(event.attributes!['gen_ai.system']).toEqual('crewai');
     expect(event.attributes!['original_attribute']).toEqual('gen_ai.agent.human_input');
-    expect(event.timestamp).toEqual([1234567890, 0]); // start_time
+    expect(event.timestamp).toEqual([1234567890, 0]); // startTime
   });
 
   /**
    * Test extractTraceloopEvents with CrewAI specific attributes
    */
-  it('test_extract_traceloop_crew_outputs', () => {
+  it('testExtractTraceloopCrewOutputs', () => {
     const attributes = {
       'crewai.crew.tasks_output': "[TaskOutput(description='Task description', output='Task result')]",
       'crewai.crew.result': 'Final crew execution result',
       'traceloop.entity.name': 'crewai',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
     span.endTime = [1234567899, 0];
 
     const events = lloHandler['extractTraceloopEvents'](span, attributes);
@@ -712,35 +712,35 @@ describe('LLOHandlerTest', () => {
     expect(events.length).toEqual(2);
 
     // Get a map of original attributes to their content
-    const events_by_attr: { [key: string]: api.Event } = Object.fromEntries(
+    const eventsByAttr: { [key: string]: api.Event } = Object.fromEntries(
       events.map(event => [event.attributes!['original_attribute'], event])
     );
 
     // Check the tasks output event
-    expect(events_by_attr['crewai.crew.tasks_output']).toBeDefined();
-    const tasks_event = events_by_attr['crewai.crew.tasks_output'];
-    expect(tasks_event.name).toEqual('gen_ai.assistant.message');
-    expect((tasks_event.data as any)['content']).toEqual(
+    expect(eventsByAttr['crewai.crew.tasks_output']).toBeDefined();
+    const tasksEvent = eventsByAttr['crewai.crew.tasks_output'];
+    expect(tasksEvent.name).toEqual('gen_ai.assistant.message');
+    expect((tasksEvent.data as any)['content']).toEqual(
       "[TaskOutput(description='Task description', output='Task result')]"
     );
-    expect((tasks_event.data as any)['role']).toEqual('assistant');
-    expect(tasks_event.attributes!['gen_ai.system']).toEqual('crewai');
-    expect(tasks_event.timestamp).toEqual([1234567899, 0]); // endTime
+    expect((tasksEvent.data as any)['role']).toEqual('assistant');
+    expect(tasksEvent.attributes!['gen_ai.system']).toEqual('crewai');
+    expect(tasksEvent.timestamp).toEqual([1234567899, 0]); // endTime
 
     // Check the result event
-    expect(events_by_attr['crewai.crew.result']).toBeDefined();
-    const result_event = events_by_attr['crewai.crew.result'];
-    expect(result_event.name).toEqual('gen_ai.assistant.message');
-    expect((result_event.data as any)['content']).toEqual('Final crew execution result');
-    expect((result_event.data as any)['role']).toEqual('assistant');
-    expect(result_event.attributes!['gen_ai.system']).toEqual('crewai');
-    expect(result_event.timestamp).toEqual([1234567899, 0]); // endTime
+    expect(eventsByAttr['crewai.crew.result']).toBeDefined();
+    const resultEvent = eventsByAttr['crewai.crew.result'];
+    expect(resultEvent.name).toEqual('gen_ai.assistant.message');
+    expect((resultEvent.data as any)['content']).toEqual('Final crew execution result');
+    expect((resultEvent.data as any)['role']).toEqual('assistant');
+    expect(resultEvent.attributes!['gen_ai.system']).toEqual('crewai');
+    expect(resultEvent.timestamp).toEqual([1234567899, 0]); // endTime
   });
 
   /**
    * Test extractTraceloopEvents with CrewAI specific attributes when gen_ai.system is available
    */
-  it('test_extract_traceloop_crew_outputs_with_gen_ai_system', () => {
+  it('testExtractTraceloopCrewOutputsWithGenAiSystem', () => {
     const attributes = {
       'crewai.crew.tasks_output': "[TaskOutput(description='Task description', output='Task result')]",
       'crewai.crew.result': 'Final crew execution result',
@@ -748,7 +748,7 @@ describe('LLOHandlerTest', () => {
       'gen_ai.system': 'crewai-agent',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
     span.endTime = [1234567899, 0];
 
     const events = lloHandler['extractTraceloopEvents'](span, attributes);
@@ -756,30 +756,30 @@ describe('LLOHandlerTest', () => {
     expect(events.length).toEqual(2);
 
     // Get a map of original attributes to their content
-    const events_by_attr: { [key: string]: api.Event } = Object.fromEntries(
+    const eventsByAttr: { [key: string]: api.Event } = Object.fromEntries(
       events.map(event => [event.attributes!['original_attribute'], event])
     );
 
     // Check the tasks output event
-    expect(events_by_attr['crewai.crew.tasks_output']).toBeDefined();
-    const tasks_event = events_by_attr['crewai.crew.tasks_output'];
-    expect(tasks_event.name).toEqual('gen_ai.assistant.message');
+    expect(eventsByAttr['crewai.crew.tasks_output']).toBeDefined();
+    const tasksEvent = eventsByAttr['crewai.crew.tasks_output'];
+    expect(tasksEvent.name).toEqual('gen_ai.assistant.message');
     // Should use gen_ai.system attribute instead of traceloop.entity.name
-    expect(tasks_event.attributes!['gen_ai.system']).toEqual('crewai-agent');
+    expect(tasksEvent.attributes!['gen_ai.system']).toEqual('crewai-agent');
 
     // Check the result event
-    expect(events_by_attr['crewai.crew.result']).toBeDefined();
-    const result_event = events_by_attr['crewai.crew.result'];
-    expect(result_event.name).toEqual('gen_ai.assistant.message');
+    expect(eventsByAttr['crewai.crew.result']).toBeDefined();
+    const resultEvent = eventsByAttr['crewai.crew.result'];
+    expect(resultEvent.name).toEqual('gen_ai.assistant.message');
     // Should use gen_ai.system attribute instead of traceloop.entity.name
-    expect(result_event.attributes!['gen_ai.system']).toEqual('crewai-agent');
+    expect(resultEvent.attributes!['gen_ai.system']).toEqual('crewai-agent');
   });
 
   /*
    * Test that traceloop.entity.input and traceloop.entity.output still use traceloop.entity.name
    * even when gen_ai.system is available
    */
-  it('test_extract_traceloop_entity_with_gen_ai_system', () => {
+  it('testExtractTraceloopEntityWithGenAiSystem', () => {
     const attributes = {
       'traceloop.entity.input': 'input data',
       'traceloop.entity.output': 'output data',
@@ -787,7 +787,7 @@ describe('LLOHandlerTest', () => {
       'gen_ai.system': 'should-not-be-used',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
     span.endTime = [1234567899, 0];
 
     const events = lloHandler['extractTraceloopEvents'](span, attributes);
@@ -795,24 +795,24 @@ describe('LLOHandlerTest', () => {
     expect(events.length).toEqual(2);
 
     // Get a map of original attributes to their content
-    const events_by_attr: { [key: string]: api.Event } = Object.fromEntries(
+    const eventsByAttr: { [key: string]: api.Event } = Object.fromEntries(
       events.map(event => [event.attributes!['original_attribute'], event])
     );
 
     // Regular traceloop entity attributes should still use traceloop.entity.name
-    const input_event = events_by_attr['traceloop.entity.input'];
-    expect(input_event.name).toEqual('gen_ai.my_entity.message');
-    expect(input_event.attributes!['gen_ai.system']).toEqual('my_entity');
+    const inputEvent = eventsByAttr['traceloop.entity.input'];
+    expect(inputEvent.name).toEqual('gen_ai.my_entity.message');
+    expect(inputEvent.attributes!['gen_ai.system']).toEqual('my_entity');
 
-    const output_event = events_by_attr['traceloop.entity.output'];
-    expect(output_event.name).toEqual('gen_ai.my_entity.message');
-    expect(output_event.attributes!['gen_ai.system']).toEqual('my_entity');
+    const outputEvent = eventsByAttr['traceloop.entity.output'];
+    expect(outputEvent.name).toEqual('gen_ai.my_entity.message');
+    expect(outputEvent.attributes!['gen_ai.system']).toEqual('my_entity');
   });
 
   /**
-   * Test _emit_llo_attributes
+   * Test emitLloAttributes
    */
-  it('test_emit_llo_attributes', () => {
+  it('testEmitLloAttributes', () => {
     const attributes = {
       'gen_ai.prompt.0.content': 'prompt content',
       'gen_ai.prompt.0.role': 'user',
@@ -826,37 +826,37 @@ describe('LLOHandlerTest', () => {
       'crewai.crew.result': 'crew result',
     };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
     span.endTime = [1234567899, 0];
 
     // Create mocks with name attribute properly set
-    const prompt_event: api.Event = {
+    const promptEvent: api.Event = {
       name: 'gen_ai.user.message',
     };
-    const completion_event: api.Event = {
+    const completionEvent: api.Event = {
       name: 'gen_ai.assistant.message',
     };
-    const traceloop_event: api.Event = { name: 'gen_ai.entity.message' };
-    const openlit_event: api.Event = { name: 'gen_ai.langchain.message' };
-    const openinference_event: api.Event = { name: 'gen_ai.anthropic.message' };
+    const traceloopEvent: api.Event = { name: 'gen_ai.entity.message' };
+    const openlitEvent: api.Event = { name: 'gen_ai.langchain.message' };
+    const openinferenceEvent: api.Event = { name: 'gen_ai.anthropic.message' };
 
     const lloHandlerExtractGenAiPromptEvents = sinon
       .stub(lloHandler, <any>'extractGenAiPromptEvents')
-      .callsFake((span, attributes, eventTimestamp) => [prompt_event]);
+      .callsFake((span, attributes, eventTimestamp) => [promptEvent]);
     const lloHandlerExtractGenAiCompletionEvents = sinon
       .stub(lloHandler, <any>'extractGenAiCompletionEvents')
-      .callsFake((span, attributes, eventTimestamp) => [completion_event]);
+      .callsFake((span, attributes, eventTimestamp) => [completionEvent]);
     const lloHandlerExtractTraceloopEvents = sinon
       .stub(lloHandler, <any>'extractTraceloopEvents')
-      .callsFake((span, attributes, eventTimestamp) => [traceloop_event]);
+      .callsFake((span, attributes, eventTimestamp) => [traceloopEvent]);
     const lloHandlerExtractOpenlitSpanEventAttributes = sinon
       .stub(lloHandler, <any>'extractOpenlitSpanEventAttributes')
-      .callsFake((span, attributes, eventTimestamp) => [openlit_event]);
+      .callsFake((span, attributes, eventTimestamp) => [openlitEvent]);
     const lloHandlerExtractOpeninferenceAttributes = sinon
       .stub(lloHandler, <any>'extractOpeninferenceAttributes')
-      .callsFake((span, attributes, eventTimestamp) => [openinference_event]);
+      .callsFake((span, attributes, eventTimestamp) => [openinferenceEvent]);
 
-    const event_logger_mockEmit = sinon.stub(event_logger_mock, 'emit').callsFake((event: api.Event) => {});
+    const eventLoggerMockEmit = sinon.stub(eventLoggerMock, 'emit').callsFake((event: api.Event) => {});
 
     lloHandler['emitLloAttributes'](span, attributes);
 
@@ -895,33 +895,33 @@ describe('LLOHandlerTest', () => {
     expect(openinferenceAttributes).toBe(attributes);
     expect(openinferenceEventTimestamp).toBeUndefined();
 
-    const eventLoggerPromptCallArg = event_logger_mockEmit.getCall(0).args[0];
-    const eventLoggerCompletionCallArg = event_logger_mockEmit.getCall(1).args[0];
-    const eventLoggerTraceloopCallArg = event_logger_mockEmit.getCall(2).args[0];
-    const eventLoggerOpenlitCallArg = event_logger_mockEmit.getCall(3).args[0];
-    const eventLoggerOpeninferenceCallArg = event_logger_mockEmit.getCall(4).args[0];
+    const eventLoggerPromptCallArg = eventLoggerMockEmit.getCall(0).args[0];
+    const eventLoggerCompletionCallArg = eventLoggerMockEmit.getCall(1).args[0];
+    const eventLoggerTraceloopCallArg = eventLoggerMockEmit.getCall(2).args[0];
+    const eventLoggerOpenlitCallArg = eventLoggerMockEmit.getCall(3).args[0];
+    const eventLoggerOpeninferenceCallArg = eventLoggerMockEmit.getCall(4).args[0];
 
-    expect(eventLoggerPromptCallArg).toBe(prompt_event);
-    expect(eventLoggerCompletionCallArg).toBe(completion_event);
-    expect(eventLoggerTraceloopCallArg).toBe(traceloop_event);
-    expect(eventLoggerOpenlitCallArg).toBe(openlit_event);
-    expect(eventLoggerOpeninferenceCallArg).toBe(openinference_event);
+    expect(eventLoggerPromptCallArg).toBe(promptEvent);
+    expect(eventLoggerCompletionCallArg).toBe(completionEvent);
+    expect(eventLoggerTraceloopCallArg).toBe(traceloopEvent);
+    expect(eventLoggerOpenlitCallArg).toBe(openlitEvent);
+    expect(eventLoggerOpeninferenceCallArg).toBe(openinferenceEvent);
   });
 
   /**
-   * Test process_spans
+   * Test processSpans
    */
-  it('test_process_spans', () => {
+  it('testProcessSpans', () => {
     const attributes: Attributes = { 'gen_ai.prompt.0.content': 'prompt content', 'normal.attribute': 'normal value' };
 
-    const span = _create_mock_span(attributes);
+    const span = createMockSpan(attributes);
 
-    const filtered_attributes: Attributes = { 'normal.attribute': 'normal value' };
+    const filteredAttributes: Attributes = { 'normal.attribute': 'normal value' };
 
     const lloHandlerEmitLloAttributes = sinon.stub(lloHandler, <any>'emitLloAttributes');
     const lloHandlerFilterAttributes = sinon
       .stub(lloHandler, <any>'filterAttributes')
-      .callsFake(attributes => filtered_attributes);
+      .callsFake(attributes => filteredAttributes);
 
     const result = lloHandler.processSpans([span]);
 
@@ -937,7 +937,7 @@ describe('LLOHandlerTest', () => {
 
     expect(result.length).toEqual(1);
     expect(result[0]).toEqual(span);
-    // Access the _attributes property that was set by the process_spans method
-    expect(result[0].attributes).toEqual(filtered_attributes);
+    // Access the attributes property that was set by the processSpans method
+    expect(result[0].attributes).toEqual(filteredAttributes);
   });
 });
