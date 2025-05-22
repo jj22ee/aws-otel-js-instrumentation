@@ -38,7 +38,7 @@ const OPENLIT_AGENT_ACTUAL_OUTPUT = 'gen_ai.agent.actual_output';
 const OPENLIT_AGENT_HUMAN_INPUT = 'gen_ai.agent.human_input';
 
 // Patterns for attribute filtering - using a set for O(1) lookups
-const exactMatchPatterns = {
+const exactMatchPatterns = new Set([
   TRACELOOP_ENTITY_INPUT,
   TRACELOOP_ENTITY_OUTPUT,
   TRACELOOP_CREW_TASKS_OUTPUT,
@@ -50,7 +50,7 @@ const exactMatchPatterns = {
   OPENLIT_AGENT_HUMAN_INPUT,
   OPENINFERENCE_INPUT_VALUE,
   OPENINFERENCE_OUTPUT_VALUE,
-};
+]);
 
 // Roles
 const ROLE_SYSTEM = 'system';
@@ -361,7 +361,7 @@ export class LLOHandler {
    */
   private isLloAttribute(key: string): boolean {
     // Check exact matches first (O(1) lookup in a set)
-    if (key in exactMatchPatterns) {
+    if (exactMatchPatterns.has(key)) {
       return true;
     }
 
@@ -434,7 +434,7 @@ export class LLOHandler {
 
     // Create events for each content+role pair
     for (const { key, value, role } of promptContentMatches) {
-      const eventAttributes = { 'gen_ai.system': genAiSystem, originalAttribute: key };
+      const eventAttributes = { 'gen_ai.system': genAiSystem, "original_attribute": key };
       const body = { content: value, role: role };
 
       // Use helper method to determine event name based on role
@@ -505,7 +505,7 @@ export class LLOHandler {
     // Create events for each content+role pair
     //[] for (index, (key, value, role) in completion_content_matches.items()) {
     for (const { key, value, role } of completionContentMatches) {
-      const eventAttributes = { 'gen_ai.system': genAiSystem, originalAttribute: key };
+      const eventAttributes = { 'gen_ai.system': genAiSystem, "original_attribute": key };
       const body = { content: value, role: role };
 
       // Use helper method to determine event name based on role
@@ -545,19 +545,19 @@ export class LLOHandler {
     eventTimestamp: HrTime | undefined = undefined
   ): Event[] {
     // Define the Traceloop attributes we're looking for
-    const traceloopKeys = {
+    const traceloopKeys = [
       TRACELOOP_ENTITY_INPUT,
       TRACELOOP_ENTITY_OUTPUT,
       TRACELOOP_CREW_TASKS_OUTPUT,
       TRACELOOP_CREW_RESULT,
-    };
+    ];
 
     // Quick check if any Traceloop attributes exist
     //[] if (!any(key in attributes for key in traceloop_keys)) {
     //     return []
     // }
     let traceloopAttributesExist: boolean = false;
-    for (const key in traceloopKeys) {
+    for (const key of traceloopKeys) {
       if (key in attributes) {
         traceloopAttributesExist = true;
         break;
@@ -586,7 +586,7 @@ export class LLOHandler {
     for (const traceloopAttr of traceloopAttrs) {
       const { attrKey, timestamp, role } = traceloopAttr;
       if (attrKey in attributes) {
-        const eventAttributes = { 'gen_ai.system': genAiSystem, originalAttribute: attrKey };
+        const eventAttributes = { 'gen_ai.system': genAiSystem, "original_attribute": attrKey };
         const body = { content: attributes[attrKey], role: role };
 
         // Custom event name for Traceloop (always use system-specific format)
@@ -609,7 +609,7 @@ export class LLOHandler {
     for (const crewaiAttr of crewaiAttrs) {
       const { attrKey, timestamp, role } = crewaiAttr;
       if (attrKey in attributes) {
-        const eventAttributes = { 'gen_ai.system': crewaiGenAiSystem, originalAttribute: attrKey };
+        const eventAttributes = { 'gen_ai.system': crewaiGenAiSystem, "original_attribute": attrKey };
         const body = { content: attributes[attrKey], role: role };
 
         // For CrewAI outputs, use the assistant message event
@@ -646,20 +646,20 @@ export class LLOHandler {
     eventTimestamp: HrTime | undefined = undefined
   ): Event[] {
     // Define the OpenLit attributes we're looking for
-    const openlitKeys = {
+    const openlitKeys = [
       OPENLIT_PROMPT,
       OPENLIT_COMPLETION,
       OPENLIT_REVISED_PROMPT,
       OPENLIT_AGENT_ACTUAL_OUTPUT,
       OPENLIT_AGENT_HUMAN_INPUT,
-    };
+    ];
 
     // Quick check if any OpenLit attributes exist
     // if (!any(key in attributes for key in openlit_keys)) {
     //     return []
     // }
     let openlitAttributesExist: boolean = false;
-    for (const key in openlitKeys) {
+    for (const key of openlitKeys) {
       if (key in attributes) {
         openlitAttributesExist = true;
         break;
@@ -709,7 +709,7 @@ export class LLOHandler {
     for (const openlitEventAttr of openlitEventAttrs) {
       const { attrKey, timestamp, role } = openlitEventAttr;
       if (attrKey in attributes) {
-        const eventAttributes = { 'gen_ai.system': genAiSystem, originalAttribute: attrKey };
+        const eventAttributes = { 'gen_ai.system': genAiSystem, "original_attribute": attrKey };
         const body = { content: attributes[attrKey], role: role };
 
         // Use helper method to determine event name based on role
@@ -755,7 +755,7 @@ export class LLOHandler {
     eventTimestamp: HrTime | undefined = undefined
   ): Event[] {
     // Define the OpenInference keys/patterns we're looking for
-    const openinferenceDirectKeys = { OPENINFERENCE_INPUT_VALUE, OPENINFERENCE_OUTPUT_VALUE };
+    const openinferenceDirectKeys = [ OPENINFERENCE_INPUT_VALUE, OPENINFERENCE_OUTPUT_VALUE ];
 
     // Quick check if any OpenInference attributes exist
     //[] let has_direct_attrs = any(key in attributes for key in openinference_direct_keys)
@@ -763,7 +763,7 @@ export class LLOHandler {
     // let has_output_msgs = any(this.openinferenceOutputMsgPattern.match(key) for key in attributes)
 
     let hasDirectAttrs: boolean = false;
-    for (const key in openinferenceDirectKeys) {
+    for (const key of openinferenceDirectKeys) {
       if (key in attributes) {
         hasDirectAttrs = true;
         break;
@@ -806,7 +806,7 @@ export class LLOHandler {
     for (const openinferenceDirectAttr of openinferenceDirectAttrs) {
       const { attrKey, timestamp, role } = openinferenceDirectAttr;
       if (attrKey in attributes) {
-        const eventAttributes = { 'gen_ai.system': genAiSystem, originalAttribute: attrKey };
+        const eventAttributes = { 'gen_ai.system': genAiSystem, "original_attribute": attrKey };
         const body = { content: attributes[attrKey], role: role };
 
         // Use helper method to determine event name based on role
@@ -832,7 +832,7 @@ export class LLOHandler {
 
     // Create events for input messages
     for (const { key, value, role } of inputMessages) {
-      const eventAttributes = { 'gen_ai.system': genAiSystem, originalAttribute: key };
+      const eventAttributes = { 'gen_ai.system': genAiSystem, "original_attribute": key };
       const body = { content: value, role: role };
 
       // Use helper method to determine event name based on role
@@ -857,7 +857,7 @@ export class LLOHandler {
 
     // Create events for output messages
     for (const { key, value, role } of outputMessages) {
-      const eventAttributes = { 'gen_ai.system': genAiSystem, originalAttribute: key };
+      const eventAttributes = { 'gen_ai.system': genAiSystem, "original_attribute": key };
       const body = { content: value, role: role };
 
       // Use helper method to determine event name based on role
