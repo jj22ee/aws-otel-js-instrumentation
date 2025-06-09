@@ -6,7 +6,7 @@
  * This exporter converts OTel metrics into CloudWatch EMF format.
  */
 
-import { Attributes, AttributeValue, diag, HrTime } from '@opentelemetry/api';
+import { Attributes, diag, HrTime } from '@opentelemetry/api';
 import {
   CloudWatchLogsClient,
   CloudWatchLogsClientConfig,
@@ -17,6 +17,7 @@ import {
   PutLogEventsCommandInput,
 } from '@aws-sdk/client-cloudwatch-logs';
 import {
+  AggregationTemporality,
   DataPoint,
   DataPointType,
   ExponentialHistogram,
@@ -24,30 +25,14 @@ import {
   GaugeMetricData,
   Histogram,
   HistogramMetricData,
+  InstrumentType,
   PushMetricExporter,
   ResourceMetrics,
   SumMetricData,
 } from '@opentelemetry/sdk-metrics';
 import { Resource } from '@opentelemetry/resources';
 import { ExportResult, ExportResultCode } from '@opentelemetry/core';
-
-// logger = logging.getLogger(__name__)
-
-// @dataclass
-// class EMFMetricData:
-//     /* Represents an EMF metric data point. */
-//     unit: Optional[str] = None
-//     timestamp: Optional[int] = None
-//     values: List[Union[int, float]] = field(default_factory=list)
-//     counts: List[int] = field(default_factory=list)
-
-//     def to_dict(self) -> Dict:
-//         /* Convert to dictionary for JSON serialization. */
-//         return {
-//             "unit": self.unit,
-//             "values": self.values,
-//             "counts": self.counts,
-//         }
+import * as Crypto from 'crypto'
 
 // Constants for CloudWatch Logs limits
 const CW_MAX_EVENT_PAYLOAD_BYTES = 256 * 1024; // 256KB
@@ -59,16 +44,35 @@ const CW_TRUNCATED_SUFFIX = '[Truncated...]';
 const CW_EVENT_TIMESTAMP_LIMIT_PAST = 14 * 24 * 60 * 60 * 1000; // 14 days in milliseconds
 const CW_EVENT_TIMESTAMP_LIMIT_FUTURE = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
 
+const RECORD_DATA_TYPES = {
+  SUM_DATA: 'SUM_DATA',
+  HISTOGRAM_DATA: 'HISTOGRAM_DATA',
+  EXP_HISTOGRAM_DATA: 'EXP_HISTOGRAM_DATA',
+}
+
 interface Record {
   //[]MetricRecord
   timestamp: number;
   attributes: Attributes;
-  value: RecordValue | number;
+  sumData?: RecordData;
+  histogramData?: RecordData;
+  expHistogramData?: RecordData;
+  value?: number;
   instrument: Instrument;
 }
 
+interface RecordData {
+  type: string,
+  value: RecordValue | number
+}
+
 interface RecordValue {
-  [key: string]: number | string | AttributeValue | undefined;
+  Values?: number[],
+  Counts?: number[],
+  Count: number,
+  Sum: number,
+  Max: number,
+  Min: number,
 }
 
 interface Instrument {
@@ -97,6 +101,7 @@ export interface EMFLogInterface {
   PlatformType?: string;
   [key: `resource.${string}`]: string;
   [metricName: string]: string | EmfLogError | Fault | undefined | Aws | RecordValue | number;
+  Version: string
 }
 
 export interface EmfLogError {
@@ -156,123 +161,25 @@ export interface EventBatch {
 }
 
 /**
- * Represents an EMF metric data point
- */
-class EMFMetricData {
-  unit?: string;
-  timestamp?: number;
-  values: number[] = []; //List[Union[int, float]] = field(default_factory=list)
-  counts: number[] = []; //List[int] = field(default_factory=list)
-
-  public toDict() {
-    return {
-      unit: this.unit,
-      values: this.values,
-      counts: this.counts,
-    };
-  }
-}
-
-// @dataclass
-// class EMFLog:
-//     /* Represents a complete EMF log entry. */
-//     version: str = "0"
-//     dimensions: List[List[str]] = field(default_factory=list)
-//     metrics: List[Dict[str, Any]] = field(default_factory=list)
-//     metadata: Dict[str, Any] = field(default_factory=dict)
-//     _aws: Dict[str, Any] = field(default_factory=dict)
-
-//     def to_dict(self) -> Dict:
-//         /* Convert EMF log to dictionary format. */
-//         result = {
-//             "_aws": self._aws,
-//             **self.metadata,
-//         }
-
-//         if self.dimensions:
-//             metrics_list = []
-//             for metric_dict in self.metrics:
-//                 // Convert each metric dict with EMFMetricData to serializable dict
-//                 serialized_metric = {}
-//                 for metric_name, metric_data in metric_dict.items():
-//                     if isinstance(metric_data, EMFMetricData):
-//                         serialized_metric[metric_name] = metric_data.to_dict()
-//                     else:
-//                         serialized_metric[metric_name] = metric_data
-//                 metrics_list.append(serialized_metric)
-
-//             result["_aws"]["CloudWatchMetrics"] = [{
-//                 "Namespace": self._aws.get("Namespace", "default"),
-//                 "Dimensions": self.dimensions,
-//                 "Metrics": metrics_list,
-//             }]
-
-//         return result
-
-/**
- * Represents a complete EMF log entry
- */
-//[][][unused] class EMFLog {
-//     public version = "0"
-//     public dimensions: string[][] = []
-//     public metrics: Dictionary[] = [] //List[Dict[str, Any]] = field(default_factory=list)
-//     public metadata: Dictionary = {}; //Dict[str, Any] = field(default_factory=dict)
-//     public _aws: Dictionary = {}; //_aws: Dict[str, Any] = field(default_factory=dict)
-
-//     /**
-//      * Convert EMF log to dictionary format
-//      * @returns
-//      */
-//     public toDict() {
-//         let result = {
-//             "_aws": this._aws,
-//             ...this.metadata //[]**this.metadata,
-//         }
-
-//         if (this.dimensions) {
-//             let metricsList: Dictionary[] = []
-//             for (const metricDict of this.metrics) {
-//                 // Convert each metric dict with EMFMetricData to serializable dict
-//                 const serializedMetric: Dictionary = {}
-//                 for (const [metricName, metricData] of Object.entries(metricDict)) {
-//                     //[] if isinstance(metric_data, EMFMetricData) {
-//                     if (metricData instanceof EMFMetricData) {
-//                         serializedMetric[metricName] = metricData.toDict()
-//                     } else {
-//                         serializedMetric[metricName] = metricData
-//                     }
-//                 }
-//                 metricsList.push(serializedMetric)
-//             }
-
-//             result["_aws"]["CloudWatchMetrics"] = [{
-//                 "Namespace": this._aws["Namespace"] || "default",
-//                 "Dimensions": this.dimensions,
-//                 "Metrics": metricsList,
-//             }]
-//         }
-
-//         return result
-//     }
-// }
-
-/**
  * OpenTelemetry metrics exporter for CloudWatch EMF format.
  *
  * This exporter converts OTel metrics into CloudWatch EMF logs which are then
  * sent to CloudWatch Logs. CloudWatch Logs automatically extracts the metrics
  * from the EMF logs.
  */
-//[] class CloudWatchEMFExporter(MetricExporter) {
 export class CloudWatchEMFExporter implements PushMetricExporter {
   private namespace: string;
   private logGroupName: string | undefined;
   private logStreamName: string;
-  private metricDeclarations: {}[];
-  private parseJsonEncodedAttrValues: boolean;
+//[]   private metricDeclarations: {}[];
+//[]   private parseJsonEncodedAttrValues: boolean;
+  private aggregationTemporality: AggregationTemporality;
+
   private logsClient: CloudWatchLogsClient;
   private logGroupExists: boolean;
   private logGroupExistsPromise: Promise<boolean>;
+  // Event batch to store logs before sending to CloudWatch
+  private eventBatch: undefined | EventBatch = undefined;
 
   // OTel to CloudWatch unit mapping
   //[]fix interface
@@ -316,6 +223,7 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     metricDeclarations: {}[] | undefined,
     parseJsonEncodedAttrValues: boolean = true,
     //[] preferred_temporality: Record<type, AggregationTemporality> | undefined,
+    aggregationTemporality: AggregationTemporality,
     //[] **kwargs
     cloudwatchLogsConfig: CloudWatchLogsClientConfig
   ) {
@@ -324,8 +232,9 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     this.namespace = namespace;
     this.logGroupName = logGroupName;
     this.logStreamName = logStreamName || this.generateLogStreamName();
-    this.metricDeclarations = metricDeclarations || [];
-    this.parseJsonEncodedAttrValues = parseJsonEncodedAttrValues;
+    //[] this.metricDeclarations = metricDeclarations || [];
+    // this.parseJsonEncodedAttrValues = parseJsonEncodedAttrValues;
+    this.aggregationTemporality = aggregationTemporality;
 
     // Initialize CloudWatch Logs client
     //[] session = boto3.Session(region_name=aws_region)
@@ -342,7 +251,7 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     // import uuid
 
     // unique_id = str(uuid.uuid4())[:8]
-    const uniqueId = crypto.randomUUID().substring(0, 8);
+    const uniqueId = Crypto.randomUUID().substring(0, 8);
     return `otel-js-${uniqueId}`;
   }
 
@@ -352,19 +261,17 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     }
 
     /* Ensure the log group exists, create if it doesn't. */
-    try {
-      //[] this.logs_client.describe_log_groups(
-      //     logGroupNamePrefix=this.log_group_name,
-      //     limit=1
-      // )
+    //[] try {
       //[][][][] Should this be non blocking???????
-      await this.logsClient.send(
+      let res = await this.logsClient.send(
         new DescribeLogGroupsCommand({
           logGroupNamePrefix: this.logGroupName,
           limit: 1,
         })
       );
-    } catch (e) {
+    // } catch (e) {
+
+      if (!res.logGroups || res.logGroups.length === 0) {
       try {
         await this.logsClient.send(
           new CreateLogGroupCommand({
@@ -378,6 +285,7 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
         throw e;
       }
     }
+    // }
 
     this.logGroupExists = true;
     return true;
@@ -505,7 +413,7 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     return [record, timestampMs];
   }
 
-  private convertSum(metric: SumMetricData, dp: DataPoint<number>): [any, number] {
+  private convertSum(metric: SumMetricData, dp: DataPoint<number>): [Record, number] {
     /*Convert a Sum metric datapoint to a metric record.
         
         Args:
@@ -522,7 +430,11 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
       ...this.createMetricRecord(metric.descriptor.name, metric.descriptor.unit, metric.descriptor.description),
       timestamp: timestampMs, // Set timestamp
       attributes: dp.attributes, // Set attributes
-      value: dp.value, // For Sum, set the sum_data
+
+      sumData: {  // For Sum, set the sumData
+        value: dp.value,
+        type: RECORD_DATA_TYPES.SUM_DATA
+      }
     };
 
     return [record, timestampMs];
@@ -544,19 +456,21 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     const timestampMs = this.normalizeTimestamp(dp.endTime);
 
     // Create base record
-    const record = {
+    const record: Record = {
       ...this.createMetricRecord(metric.descriptor.name, metric.descriptor.unit, metric.descriptor.description),
       timestamp: timestampMs, // Set timestamp
       attributes: dp.attributes, // Set attributes
 
-      //[][] How to handle undefined values like dp.value.sum = undefined?
-      value: {
-        // For Histogram, set the histogram_data
-        Count: dp.value.count,
-        Sum: dp.value.sum,
-        Min: dp.value.min,
-        Max: dp.value.max,
-      },
+      histogramData: {
+        value: {
+          // For Histogram, set the histogram_data
+          Count: dp.value.count,
+          Sum: dp.value.sum ?? 0,
+          Min: dp.value.min ?? 0,
+          Max: dp.value.max ?? 0,
+        },
+        type: RECORD_DATA_TYPES.HISTOGRAM_DATA
+      }
     };
 
     return [record, timestampMs];
@@ -565,7 +479,7 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
   private convertExpHistogram(
     metric: ExponentialHistogramMetricData,
     dp: DataPoint<ExponentialHistogram>
-  ): [any, number] {
+  ): [Record, number] {
     /*
         Convert an ExponentialHistogram metric datapoint to a metric record.
         
@@ -661,21 +575,23 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     }
 
     // Create base record
-    const record = {
+    const record: Record = {
       ...this.createMetricRecord(metric.descriptor.name, metric.descriptor.unit, metric.descriptor.description),
       timestamp: timestampMs,
       attributes: dp.attributes, // Set attributes
 
-      //[][] How to handle dp.value.sum == undefined?
-      value: {
-        // Set the histogram data in the format expected by CloudWatch EMF
-        Values: arrayValues,
-        Counts: arrayCounts,
-        Count: dp.value.count,
-        Sum: dp.value.sum,
-        Max: dp.value.max,
-        Min: dp.value.min,
-      },
+      expHistogramData: {
+        value: {
+          // Set the histogram data in the format expected by CloudWatch EMF
+          Values: arrayValues,
+          Counts: arrayCounts,
+          Count: dp.value.count,
+          Sum: dp.value.sum ?? 0,
+          Max: dp.value.max ?? 0,
+          Min: dp.value.min ?? 0,
+        },
+        type: RECORD_DATA_TYPES.HISTOGRAM_DATA
+      }
     };
 
     return [record, timestampMs];
@@ -709,6 +625,7 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
         Timestamp: timestamp || parseInt(`${Date.now()}`),
         CloudWatchMetrics: [],
       },
+      Version: '1'
     };
 
     // Add resource attributes to EMF log but not as dimensions
@@ -733,35 +650,19 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
       const metricName = this.getMetricName(record);
       const unit = this.getUnit(record.instrument);
 
-      //[] // TODO - add metric value into record for all kinds of metric type
-      emfLog[metricName] = record.value;
-
       // Process different types of aggregations
-      if ('histogram_data' in record) {
-        // Histogram
-        const histogram = record.histogram_data;
-        if (histogram.count > 0) {
-          const bucketBoundaries = 'bucket_boundaries' in histogram ? list(histogram.bucket_boundaries) : [];
-          const bucketCounts = 'bucket_counts' in histogram ? list(histogram.bucket_counts) : [];
-          // Format for CloudWatch EMF histogram format
-          emfLog[metricName] = {
-            Values: bucketBoundaries,
-            Counts: bucketCounts,
-            Max: 0,
-            Min: 0,
-            Count: 1,
-            Sum: 0,
-          };
-        }
-      } else if ('sum_data' in record) {
-        //[][][][]
-        // Counter/UpDownCounter
-        const sumData = record.sum_data;
-        // Store value directly in emf_log
-        emfLog[metricName] = sumData.value;
+      if (record.expHistogramData) {
+        // Base2 Exponential Histogram - Store value directly in emf_log
+        emfLog[metricName] = record.expHistogramData.value
+      } else if (record.histogramData) {
+        // Regular Histogram metrics - Store value directly in emf_log
+        emfLog[metricName] = record.histogramData.value
+      } else if (record.sumData) {
+        // Counter/UpDownCounter - Store value directly in emf_log
+        emfLog[metricName] = record.sumData.value;
       } else {
         // Other aggregations (e.g., LastValue)
-        if ('value' in record) {
+        if (record.value) {
           // Store value directly in emf_log
           emfLog[metricName] = record.value;
         }
@@ -915,8 +816,6 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
       return;
     } catch (e) {
       diag.error(`Failed to export metrics: ${e}`);
-      //[] import traceback
-      //[] diag.error(traceback.format_exc())
       resultCallback({ code: ExportResultCode.FAILED, error: e as Error });
       return;
     }
@@ -1107,7 +1006,7 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
           })
         );
 
-        diag.info(`Created log group: ${this.logGroupName}`);
+        diag.debug(`Created log group: ${this.logGroupName}`);
       } catch (e) {
         diag.debug(`Error when creating log group "${this.logGroupName}": ${e}`);
       }
@@ -1121,7 +1020,7 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
           })
         );
 
-        diag.info(`Created log stream: ${this.logStreamName}`);
+        diag.debug(`Created log stream: ${this.logStreamName}`);
       } catch (e) {
         diag.debug(`Error when creating log stream "${this.logStreamName}": ${e}`);
       }
@@ -1138,14 +1037,9 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
       return response;
     } catch (e) {
       diag.error(`Failed to send log events: ${e}`);
-      //[] import traceback
-      //[] diag.error(traceback.format_exc())
       throw e;
     }
   }
-
-  // Event batch to store logs before sending to CloudWatch
-  private eventBatch: undefined | EventBatch = undefined;
 
   private async sendLogEvent(logEvent: LogEvent) {
     /*
@@ -1178,10 +1072,10 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
         this.eventBatchExceedsLimit(currentBatch, eventSize) ||
         !this.isBatchActive(currentBatch, logEvent['timestamp'])
       ) {
-        // Send the current batch
-        await this.sendLogBatch(currentBatch);
         // Create a new batch
         this.eventBatch = this.createEventBatch();
+        // Send the current batch
+        await this.sendLogBatch(currentBatch);
         currentBatch = this.eventBatch;
       }
 
@@ -1189,8 +1083,6 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
       this.appendToBatch(currentBatch, logEvent, eventSize);
     } catch (e) {
       diag.error(`Failed to process log event: ${e}`);
-      //[] import traceback
-      //[] diag.error(traceback.format_exc())
       throw e;
     }
   }
@@ -1207,8 +1099,8 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
         */
     if (this.eventBatch !== undefined && this.eventBatch['logEvents'].length > 0) {
       const currentBatch = this.eventBatch;
-      await this.sendLogBatch(currentBatch);
       this.eventBatch = this.createEventBatch();
+      await this.sendLogBatch(currentBatch);
     }
     diag.debug('CloudWatchEMFExporter force flushes the bufferred metrics');
     return Promise.resolve();
@@ -1226,5 +1118,9 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     // Intentionally do nothing
     diag.debug('CloudWatchEMFExporter shutdown called');
     return Promise.resolve();
+  }
+
+  selectAggregationTemporality(instrumentType: InstrumentType): AggregationTemporality {
+      return this.aggregationTemporality;
   }
 }
