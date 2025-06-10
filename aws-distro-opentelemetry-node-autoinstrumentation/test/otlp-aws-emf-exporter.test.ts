@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as api from '@opentelemetry/api-events';
-import { Attributes, SpanContext, SpanKind } from '@opentelemetry/api';
+import { Attributes, SpanContext, SpanKind, ValueType } from '@opentelemetry/api';
 import { Resource } from '@opentelemetry/resources';
 import { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import expect from 'expect';
@@ -20,49 +20,47 @@ import {
   CreateLogStreamCommand,
   PutLogEventsCommand,
   PutLogEventsCommandInput,
+  CloudWatchLogs,
+  CreateLogStreamCommandInput,
+  CreateLogStreamCommandOutput,
+  PutLogEventsCommandOutput,
+  DescribeLogGroupsCommandOutput,
+  DescribeLogGroupsCommandInput,
+  CreateLogGroupCommandInput,
+  CreateLogGroupCommandOutput
 } from '@aws-sdk/client-cloudwatch-logs';
 import * as nock from 'nock';
 import { CloudWatchEMFExporter, createEmfExporter, CW_MAX_EVENT_PAYLOAD_BYTES, CW_MAX_REQUEST_EVENT_COUNT, CW_MAX_REQUEST_PAYLOAD_BYTES, CW_TRUNCATED_SUFFIX, Record, RECORD_DATA_TYPES, RecordValue } from '../src/otlp-aws-emf-exporter';
-import { AggregationTemporality, DataPoint, ExponentialHistogram, Histogram } from '@opentelemetry/sdk-metrics';
+import { AggregationTemporality, DataPoint, DataPointType, ExponentialHistogram, ExponentialHistogramMetricData, GaugeMetricData, Histogram, HistogramMetricData, InstrumentType, ResourceMetrics, SumMetricData } from '@opentelemetry/sdk-metrics';
 import { ExportResultCode } from '@opentelemetry/core';
+import { HttpHandlerOptions } from '@smithy/protocol-http';
 
+const region = 'us-east-1'
 
 describe('TestBatchProcessing', () => {
   let mockClient;
-  let region = 'us-east-1'
   let exporter: CloudWatchEMFExporter;
 
-  before(() => {
+  beforeEach(() => {
       /* Set up test fixtures. */
-      let mockClient = new CloudWatchLogsClient({
-          region: region,
-          credentials: {
-            accessKeyId: 'abcde',
-            secretAccessKey: 'abcde',
-          },
-      });
-      //[]
-      nock(`https://logs.${region}.amazonaws.com/`).post('/').reply(200, function (uri: any, requestBody: any) {
-          // reqHeaders = this.req.headers;
-          return [];
-        });
-        
+        // Stub CloudWatchLogs to avoid AWS calls
+        sinon
+            .stub(CloudWatchLogs.prototype, 'describeLogGroups')
+            .callsFake(input => {
+                    return {"logGroups": []}
+            });
+        sinon
+            .stub(CloudWatchLogs.prototype, 'createLogGroup')
+            .callsFake(input => {
+                    return {}
+            });
+
         exporter = new CloudWatchEMFExporter('TestNamespace', 'test-log-group', undefined, undefined, undefined, true, AggregationTemporality.DELTA, {})
+    });
 
-        // Mock the boto3 client to avoid AWS calls
-        // mock_client = Mock()
-        // mock_boto_client.return_value = mock_client
-        // mock_client.describe_log_groups.return_value = {"logGroups": []}
-        // mock_client.create_log_group.return_value = {}
-        // self.exporter = CloudWatchEMFExporter(
-        //     namespace="TestNamespace",
-        //     log_group_name="test-log-group"
-        // )
-  });
-
-  //[] afterEach(() => {
-  //   sinon.restore();
-  // });
+    afterEach(() => {
+        sinon.restore();
+    })
 
     it('test_create_event_batch', () => {
         /* Test event batch creation. */
@@ -220,7 +218,7 @@ describe('TestBatchProcessing', () => {
             {"message": "second", "timestamp": current_time + 1000}
         ]
         
-        batch["logEvents"] = {...events}
+        batch["logEvents"] = [...events]
         exporter['sortLogEvents'](batch)
         
         // Check that events are now sorted by timestamp
@@ -232,31 +230,40 @@ describe('TestBatchProcessing', () => {
 
 describe('TestCreateEMFExporter', () => {
     /* Test the create_emf_exporter function. */
+
+
+  beforeEach(() => {
+      /* Set up test fixtures. */
+        // Stub CloudWatchLogs to avoid AWS calls
+        sinon
+            .stub(CloudWatchLogs.prototype, 'describeLogGroups')
+            .callsFake(input => {
+                    return {"logGroups": []}
+            });
+        sinon
+            .stub(CloudWatchLogs.prototype, 'createLogGroup')
+            .callsFake(input => {
+                    return {}
+            });
+    });
+
+    afterEach(() => {
+        sinon.restore();
+    })
     
-    //[]@patch('boto3.client')
-    it('test_create_emf_exporter_default_args', () => {
-        /* Test creating exporter with default arguments. */
-        // Mock the boto3 client to avoid AWS calls
-        let mock_client = Mock()
-        mock_boto_client.return_value = mock_client
-        mock_client.describe_log_groups.return_value = {"logGroups": []}
-        mock_client.create_log_group.return_value = {}
-        
+    it('test_create_emf_exporter_default_args', async () => {
+
         let exporter = createEmfExporter()
+
+        await exporter['logGroupExistsPromise']
         
         expect(exporter).toBeInstanceOf(CloudWatchEMFExporter);
-        expect(exporter['namespace']).toEqual("OTelPython");
+        expect(exporter['namespace']).toEqual("OTelJavaScript");
     });
-    
-    //[] //[]@patch('boto3.client')
+
     it('test_create_emf_exporter_custom_args', () => {
         /* Test creating exporter with custom arguments. */
-        // Mock the boto3 client to avoid AWS calls
-        let mock_client = Mock()
-        mock_boto_client.return_value = mock_client
-        mock_client.describe_log_groups.return_value = {"logGroups": []}
-        mock_client.create_log_group.return_value = {}
-        
+
         let exporter = createEmfExporter(
             "CustomNamespace",
             "/custom/log/group",
@@ -268,39 +275,58 @@ describe('TestCreateEMFExporter', () => {
         expect(exporter['namespace']).toEqual("CustomNamespace");
         expect(exporter['logGroupName']).toEqual("/custom/log/group");
     });
-    
-    //[]@patch('boto3.client')
-    //[]@patch('logging.basicConfig')
-    //[] def test_create_emf_exporter_debug_mode(self, mock_logging_config, mock_boto_client):
+
     it('test_create_emf_exporter_debug_mode', () => {
         /* Test creating exporter with debug mode enabled. */
-        // Mock the boto3 client to avoid AWS calls
-        let mock_client = Mock()
-        mock_boto_client.return_value = mock_client
-        mock_client.describe_log_groups.return_value = {"logGroups": []}
-        mock_client.create_log_group.return_value = {}
         
         let exporter = createEmfExporter('OTelJavaScript', '/aws/otel/javascript', undefined, undefined, true);
 
         expect(exporter).toBeInstanceOf(CloudWatchEMFExporter);
-        mock_logging_config.assert_called_once()
+        //[][] mock_logging_config.assert_called_once()
     });
   });
 
 describe('TestSendLogBatch', () => {
   let exporter: CloudWatchEMFExporter;
+  let cwlogs: CloudWatchLogs
+  let describeLogGroupsStub: sinon.SinonStub<[args: DescribeLogGroupsCommandInput, options: HttpHandlerOptions, cb: (err: any, data?: DescribeLogGroupsCommandOutput) => void], void>
+  let createLogGroupStub: sinon.SinonStub<[args: CreateLogGroupCommandInput, options: HttpHandlerOptions, cb: (err: any, data?: CreateLogGroupCommandOutput) => void], void>
+  let createLogStreamStub: sinon.SinonStub<[args: CreateLogStreamCommandInput, options: HttpHandlerOptions, cb: (err: any, data?: CreateLogStreamCommandOutput) => void], void>;
+  let putLogEventsStub: sinon.SinonStub<[args: PutLogEventsCommandInput, options: HttpHandlerOptions, cb: (err: any, data?: PutLogEventsCommandOutput) => void], void>
 
-    //[]@patch('boto3.Session')
-    before(() => {
-    //[] def setUp(self, mock_session):
-        /* Set up test fixtures. */
-        // Mock the boto3 client to avoid AWS calls
-        //[] self.mock_client = Mock()
-        // self.mock_client.describe_log_groups.return_value = {"logGroups": []}
-        // self.mock_client.create_log_group.return_value = {}
-        // self.mock_client.create_log_stream.return_value = {}
-        // self.mock_client.put_log_events.return_value = {"nextSequenceToken": "12345"}
-        
+    beforeEach(async () => {
+        cwlogs = new CloudWatchLogs({
+            region: region,
+            credentials: {
+                accessKeyId: 'abcde',
+                secretAccessKey: 'abcde',
+            },
+        })
+
+
+        // Stub CloudWatchLogs to avoid AWS calls
+        describeLogGroupsStub = sinon
+            .stub(CloudWatchLogs.prototype, 'describeLogGroups')
+            .callsFake(input => {
+                    return {"logGroups": []}
+            });
+        createLogGroupStub = sinon
+            .stub(CloudWatchLogs.prototype, 'createLogGroup')
+            .callsFake(input => {
+                    return {}
+            });
+        createLogStreamStub = sinon
+            .stub(CloudWatchLogs.prototype, 'createLogStream')
+            .callsFake(input => {
+                    return  {}
+            });
+        putLogEventsStub = sinon
+            .stub(CloudWatchLogs.prototype, 'putLogEvents')
+            .callsFake(input => {
+                    return  {"nextSequenceToken": "12345"}
+            });
+
+
         // // Create a proper exception class for ResourceAlreadyExistsException
         // class ResourceAlreadyExistsException(Exception):
         //     pass
@@ -314,18 +340,24 @@ describe('TestSendLogBatch', () => {
         
 
         exporter = new CloudWatchEMFExporter('TestNamespace', 'test-log-group', undefined, undefined, undefined, true, AggregationTemporality.DELTA, {})
+        await exporter['logGroupExistsPromise']
     });
+
+    afterEach(() => {
+        sinon.restore();
+    })
         
-    it('test_send_log_batch_empty', () => {
+    it('test_send_log_batch_empty', async () => {
         /* Test sending empty log batch. */
+
         let batch = exporter['createEventBatch']()
-        
         // Should not make any AWS calls for empty batch
-        exporter['sendLogBatch'](batch)
-        self.mock_client.put_log_events.assert_not_called()
+        await exporter['sendLogBatch'](batch)
+
+        sinon.assert.notCalled(putLogEventsStub);
     });
         
-    it('test_send_log_batch_with_events', () => {
+    it('test_send_log_batch_with_events', async () => {
         /* Test sending log batch with events. */
         let batch = exporter['createEventBatch']()
         let current_time = Date.now()
@@ -339,18 +371,17 @@ describe('TestSendLogBatch', () => {
         for (const event of events) {
             batch["logEvents"].push(event)
         }
-        
-        exporter['sendLogBatch'](batch)
-        
-        // Verify put_log_events was called
-        self.mock_client.put_log_events.assert_called_once()
-        let call_args = self.mock_client.put_log_events.call_args[1]
-        
-        expect(call_args["logGroupName"]).toEqual("test-log-group");
-        expect(call_args["logEvents"].length).toEqual(2);
+
+        await exporter['sendLogBatch'](batch)
+
+        sinon.assert.calledOnce(putLogEventsStub);
+
+        const putLogEventsCallArg1 = putLogEventsStub.getCall(0).args[0];
+        expect(putLogEventsCallArg1.logGroupName).toEqual('test-log-group');
+        expect(putLogEventsCallArg1.logEvents?.length).toEqual(2);
     });
         
-    it('test_send_log_batch_sorts_events', () => {
+    it('test_send_log_batch_sorts_events', async () => {
         /* Test that log batch sorting works correctly. */
         let batch = exporter['createEventBatch']()
         let current_time = Date.now()
@@ -364,27 +395,40 @@ describe('TestSendLogBatch', () => {
         for (const event of events) {
             batch["logEvents"].push(event)
         }
-        
-        exporter['sendLogBatch'](batch)
+
+        await exporter['sendLogBatch'](batch)
         
         // Verify events were sorted by timestamp
-        let call_args = self.mock_client.put_log_events.call_args[1]
-        let sorted_events = call_args["logEvents"]
-        
-        expect(sorted_events[0]["message"]).toEqual("first");
-        expect(sorted_events[1]["message"]).toEqual("second");
+        const putLogEventsCallArg1 = putLogEventsStub.getCall(0).args[0];
+        let sortedEvents = putLogEventsCallArg1.logEvents
+
+        expect(sortedEvents?.length).toEqual(2);
+        expect(sortedEvents ? sortedEvents[0].message : undefined).toEqual('first');
+        expect(sortedEvents ? sortedEvents[1].message : undefined).toEqual('second');
     });
         
-    it('test_send_log_batch_handles_exceptions', () => {
+    // First exception is handled, second exception is thrown
+    it('test_send_log_batch_handles_exceptions', async () => {
+        // Need to update these stubs for this test to throw errors
+        createLogGroupStub.restore();
+        putLogEventsStub.restore();
         /* Test that send_log_batch handles exceptions properly. */
         let batch = exporter['createEventBatch']()
-        batch["logEvents"].append({"message": "test", "timestamp": Date.now()})
-        
-        // Make create_log_group raise an exception (this happens first)
-        self.mock_client.create_log_group.side_effect = Exception("AWS error")
-        
-        with self.assertRaises(Exception):
-            exporter['sendLogBatch'](batch)
+        batch["logEvents"].push({"message": "test", "timestamp": Date.now()})
+
+        createLogGroupStub = sinon
+            .stub(CloudWatchLogs.prototype, 'createLogGroup')
+            .callsFake(input => {
+                    throw Error('AWS error')
+            });
+        putLogEventsStub = sinon
+            .stub(CloudWatchLogs.prototype, 'putLogEvents')
+            .callsFake(input => {
+                    throw Error('AWS test error 123')
+            });
+
+            //[][][] Check with Min, we want to confirm NOT to throw right?
+        await expect(exporter['sendLogBatch'](batch)).rejects.toThrow('AWS test error 123');
     });
 });
 
@@ -393,32 +437,36 @@ describe('TestSendLogEvent', () => {
     /* Test individual log event sending functionality. */
     let exporter: CloudWatchEMFExporter;
     
-    //[]@patch('boto3.Session')
-    before(() => {
-    //[] def setUp(self, mock_session):
-        /* Set up test fixtures. */
-        // Mock the boto3 client to avoid AWS calls
-        //[] self.mock_client = Mock()
-        // self.mock_client.describe_log_groups.return_value = {"logGroups": []}
-        // self.mock_client.create_log_group.return_value = {}
-        // self.mock_client.create_log_stream.return_value = {}
-        // self.mock_client.put_log_events.return_value = {"nextSequenceToken": "12345"}
-        
-        // // Create a proper exception class for ResourceAlreadyExistsException
-        // class ResourceAlreadyExistsException(Exception):
-        //     pass
-        
-        // self.mock_client.exceptions.ResourceAlreadyExistsException = ResourceAlreadyExistsException
-        
-        // // Mock session to return our mock client
-        // let mock_session_instance = Mock()
-        // mock_session.return_value = mock_session_instance
-        // mock_session_instance.client.return_value = self.mock_client
-        
+    beforeEach(() => {
+        // Stub CloudWatchLogs to avoid AWS calls
+        sinon
+            .stub(CloudWatchLogs.prototype, 'describeLogGroups')
+            .callsFake(input => {
+                    return {"logGroups": []}
+            });
+        sinon
+            .stub(CloudWatchLogs.prototype, 'createLogGroup')
+            .callsFake(input => {
+                    return {}
+            });
+        sinon
+            .stub(CloudWatchLogs.prototype, 'createLogStream')
+            .callsFake(input => {
+                    return  {}
+            });
+        sinon
+            .stub(CloudWatchLogs.prototype, 'putLogEvents')
+            .callsFake(input => {
+                    return  {"nextSequenceToken": "12345"}
+            });
         exporter = new CloudWatchEMFExporter('TestNamespace', 'test-log-group', undefined, undefined, undefined, true, AggregationTemporality.DELTA, {})
     });
+
+    afterEach(() => {
+        sinon.restore();
+    })
         
-    it('test_send_log_event_creates_batch', () => {
+    it('test_send_log_event_creates_batch', async () => {
         /* Test that sending first log event creates a batch. */
         let log_event = {
             "message": "test message",
@@ -428,45 +476,47 @@ describe('TestSendLogEvent', () => {
         // Initially no batch should exist
         expect(exporter['eventBatch']).toBeUndefined()
         
-        exporter['sendLogEvent'](log_event)
+        await exporter['sendLogEvent'](log_event)
         
         // Batch should now be created
         expect(exporter['eventBatch']).not.toBeUndefined();
         expect(exporter['eventBatch'] ? exporter['eventBatch']["logEvents"].length : -1).toEqual(1);
     });
         
-    it('test_send_log_event_invalid_event', () => {
+    it('test_send_log_event_invalid_event', async () => {
         /* Test sending invalid log event. */
         let log_event = {
             "message": "",  // Empty message should be invalid
             "timestamp": Date.now()
         }
         
-        exporter['sendLogEvent'](log_event)
+        await exporter['sendLogEvent'](log_event)
         
         // Batch should not be created for invalid event
         expect(exporter['eventBatch']).toBeUndefined()
       })
     
-    //[]@patch.object(CloudWatchEMFExporter, '_send_log_batch')
-    //[] def test_send_log_event_triggers_batch_send(self, mock_send_batch):
-    it('test_send_log_event_triggers_batch_send', () => {
+    it('test_send_log_event_triggers_batch_send', async () => {
         /* Test that exceeding batch limits triggers batch send. */
+
+        const sendLogBatchStub = sinon
+            .stub(exporter, <any>'sendLogBatch');
+
         // First, add an event to create a batch
         let log_event = {
             "message": "test message",
             "timestamp": Date.now()
         }
-        exporter['sendLogEvent'](log_event)
+        await exporter['sendLogEvent'](log_event)
         
         // Now simulate batch being at limit        
         exporter['eventBatch']!["logEvents"] = Array(CW_MAX_REQUEST_EVENT_COUNT).fill({"message": "test"})
         
         // Send another event that should trigger batch send
-        exporter['sendLogEvent'](log_event)
+        await exporter['sendLogEvent'](log_event)
         
         // Verify batch was sent
-        mock_send_batch.assert_called()
+        sinon.assert.calledOnce(sendLogBatchStub)
       })
 });
 
@@ -474,19 +524,30 @@ describe('TestCloudWatchEMFExporter', () => {
 //[] class TestCloudWatchEMFExporter(unittest.TestCase):
     /* Test CloudWatchEMFExporter class. */
     let exporter: CloudWatchEMFExporter;
-    
-    //[]@patch('boto3.client')
-    before(() => {
-    //[] def setUp(self, mock_boto_client):
-        /* Set up test fixtures. */
-        // Mock the boto3 client to avoid AWS calls
-        let mock_client = Mock()
-        mock_boto_client.return_value = mock_client
-        mock_client.describe_log_groups.return_value = {"logGroups": []}
-        mock_client.create_log_group.return_value = {}
+      let describeLogGroupsStub: sinon.SinonStub<[args: DescribeLogGroupsCommandInput, options: HttpHandlerOptions, cb: (err: any, data?: DescribeLogGroupsCommandOutput) => void], void>
+  let createLogGroupStub: sinon.SinonStub<[args: CreateLogGroupCommandInput, options: HttpHandlerOptions, cb: (err: any, data?: CreateLogGroupCommandOutput) => void], void>
+  let createLogStreamStub: sinon.SinonStub<[args: CreateLogStreamCommandInput, options: HttpHandlerOptions, cb: (err: any, data?: CreateLogStreamCommandOutput) => void], void>;
+  let putLogEventsStub: sinon.SinonStub<[args: PutLogEventsCommandInput, options: HttpHandlerOptions, cb: (err: any, data?: PutLogEventsCommandOutput) => void], void>
+
+    beforeEach(() => {
+        // Stub CloudWatchLogs to avoid AWS calls
+        sinon
+            .stub(CloudWatchLogs.prototype, 'describeLogGroups')
+            .callsFake(input => {
+                    return {"logGroups": []}
+            });
+        sinon
+            .stub(CloudWatchLogs.prototype, 'createLogGroup')
+            .callsFake(input => {
+                    return {}
+            });
 
         exporter = new CloudWatchEMFExporter('TestNamespace', 'test-log-group', undefined, undefined, undefined, true, AggregationTemporality.DELTA, {})
     });
+
+    afterEach(() => {
+        sinon.restore();
+    })
         
     it('test_initialization', () => {
         /* Test exporter initialization. */
@@ -495,17 +556,9 @@ describe('TestCloudWatchEMFExporter', () => {
         expect(exporter['metricDeclarations']).toEqual([]);
     });
     
-    //[]@patch('boto3.client')
-    //[] def test_initialization_with_custom_params(self, mock_boto_client):
     it('test_initialization_with_custom_params', () => {
         /* Test exporter initialization with custom parameters. */
-        // Mock the boto3 client to avoid AWS calls
-        let mock_client = Mock()
-        mock_boto_client.return_value = mock_client
-        mock_client.describe_log_groups.return_value = {"logGroups": []}
-        mock_client.create_log_group.return_value = {}
-        
-        //[]
+
         let newExporter = new CloudWatchEMFExporter(
             "CustomNamespace",
             "custom-log-group",
@@ -539,17 +592,30 @@ describe('TestCloudWatchEMFExporter', () => {
     it('test_get_metric_name', () => {
         /* Test metric name extraction. */
         // Test with record that has instrument.name
-        let record = Mock()
-        record.instrument = Mock()
-        record.instrument.name = "test_metric"
-        delete record.name  // Ensure record.name doesn't exist
+        let record: Record = {
+            instrument: {
+                name: "test_metric",
+                unit: 'ms',
+                description: 'test description'
+            },
+            timestamp: Date.now(),
+            attributes: {}
+        }
         
         let result = exporter['getMetricName'](record)
         expect(result).toEqual("test_metric");
         
         // Test with record that has direct name attribute
-        let record_with_name = Mock()
-        record_with_name.name = "direct_metric"
+        let record_with_name: Record = {
+            name: "direct_metric",
+            timestamp: Date.now(),
+            attributes: {},
+            instrument: {
+                name: "indirect_metric",
+                unit: 'ms',
+                description: 'test description'
+            },
+        }
         
         let result2 = exporter['getMetricName'](record_with_name)
         expect(result2).toEqual("direct_metric");
@@ -575,10 +641,10 @@ describe('TestCloudWatchEMFExporter', () => {
         
         // Should be a string representation of sorted attributes
         expect(typeof result).toEqual('string');
-        expect(result).toHaveProperty('service')
-        expect(result).toHaveProperty("test")
-        expect(result).toHaveProperty("env")
-        expect(result).toHaveProperty("prod")
+        expect(result).toContain('service')
+        expect(result).toContain("test")
+        expect(result).toContain("env")
+        expect(result).toContain("prod")
     });
         
     it('test_get_attributes_key_consistent', () => {
@@ -595,15 +661,23 @@ describe('TestCloudWatchEMFExporter', () => {
         
     it('test_group_by_attributes_and_timestamp', () => {
         /* Test grouping by attributes and timestamp. */
-        let record = Mock()
-        record.attributes = {"env": "test"}
+        let record: Record = {
+            instrument: {
+                name: "test_metric",
+                unit: 'ms',
+                description: 'test description'
+            },
+            timestamp: Date.now(),
+            attributes: {"env": "test"}
+        }
         let timestamp_ms = 1234567890
         
         let result = exporter['groupByAttributesAndTimestamp'](record, timestamp_ms)
         
         // Should return a tuple with attributes key and timestamp
-        self.assertIsInstance(result, tuple)
         expect(result.length).toEqual(2);
+        expect(typeof result[0]).toEqual('string');
+        expect(typeof result[1]).toEqual('number');
         expect(result[1]).toEqual(timestamp_ms);
     });
         
@@ -614,8 +688,8 @@ describe('TestCloudWatchEMFExporter', () => {
         
         // Should generate unique names
         expect(name1).not.toEqual(name2)
-        expect(name1.startsWith("otel-python-")).toBeTruthy();
-        expect(name2.startsWith("otel-python-")).toBeTruthy();
+        expect(name1.startsWith("otel-javascript-")).toBeTruthy();
+        expect(name2.startsWith("otel-javascript-")).toBeTruthy();
     });
         
     it('test_normalize_timestamp', () => {
@@ -639,14 +713,31 @@ describe('TestCloudWatchEMFExporter', () => {
     });
         
     it('test_convert_gauge', () => {
+        let dp:DataPoint<number> = {
+            startTime:[0,0],
+            endTime:[1,0],
+            attributes:{"key": "value"},
+            value:42.5
+        }
+
         /* Test gauge conversion. */
-        let metric = MockMetric("gauge_metric", "Count", "Gauge description")
-        let dp:DataPoint<number> = MockDataPoint(value=42.5, attributes={"key": "value"})
+        let metric:GaugeMetricData = {
+            dataPointType: DataPointType.GAUGE,
+            descriptor: {
+                name: "test_gauge_metric_data",
+                unit: "Count",
+                description: "Gauge description",
+                valueType: ValueType.DOUBLE,
+                type: InstrumentType.GAUGE
+            },
+            dataPoints: [dp],
+            aggregationTemporality: AggregationTemporality.DELTA
+        }
         
         const [record, timestamp] = exporter['convertGauge'](metric, dp);
         
         expect(record).not.toBeUndefined();
-        expect(record.instrument.name).toEqual("gauge_metric");
+        expect(record.instrument.name).toEqual("test_gauge_metric_data");
         expect(record.value).toEqual(42.5);
         expect(record.attributes).toEqual({"key": "value"});
         expect(typeof timestamp).toEqual('number');
@@ -654,9 +745,28 @@ describe('TestCloudWatchEMFExporter', () => {
         
     it('test_convert_sum', () => {
         /* Test sum conversion with the bug fix. */
-        let metric = MockMetric("sum_metric", "Count", "Sum description")
-        let dp:DataPoint<number> = MockDataPoint(value=100.0, attributes={"env": "test"})
-        
+       let dp:DataPoint<number> = {
+            startTime:[0,0],
+            endTime:[1,0],
+            attributes:{"env": "test"},
+            value:100.0
+        }
+
+        /* Test gauge conversion. */
+        let metric:SumMetricData = {
+            dataPointType: DataPointType.SUM,
+            descriptor: {
+                name: "sum_metric",
+                unit: "Count",
+                description: "Sum description",
+                valueType: ValueType.DOUBLE,
+                type: InstrumentType.COUNTER
+            },
+            dataPoints: [dp],
+            aggregationTemporality: AggregationTemporality.DELTA,
+            isMonotonic: true
+        }
+
         const [record, timestamp] = exporter['convertSum'](metric, dp);
         
         expect(record).not.toBeUndefined();
@@ -669,14 +779,35 @@ describe('TestCloudWatchEMFExporter', () => {
         
     it('test_convert_histogram', () => {
         /* Test histogram conversion. */
-        let metric = MockMetric("histogram_metric", "ms", "Histogram description")
-        let dp: DataPoint<Histogram> = MockHistogramDataPoint(
-            count=10,
-            sum_val=150.0,
-            min_val=5.0,
-            max_val=25.0,
-            attributes={"region": "us-east-1"}
-        )
+        let dp:DataPoint<Histogram> = {
+            startTime:[0,0],
+            endTime:[1,0],
+            attributes:{"region": "us-east-1"},
+            value: {
+                count: 10,
+                sum: 150.0,
+                min: 5.0,
+                max: 25.0,
+                buckets: {
+                    boundaries:[],
+                    counts:[]
+                }
+            }
+        }
+
+        /* Test gauge conversion. */
+        let metric:HistogramMetricData = {
+            dataPointType: DataPointType.HISTOGRAM,
+            descriptor: {
+                name: "histogram_metric",
+                unit: "ms",
+                description: "Histogram description",
+                valueType: ValueType.DOUBLE,
+                type: InstrumentType.HISTOGRAM
+            },
+            dataPoints: [dp],
+            aggregationTemporality: AggregationTemporality.DELTA,
+        }
         
         const [record, timestamp] = exporter['convertHistogram'](metric, dp);
         
@@ -697,14 +828,51 @@ describe('TestCloudWatchEMFExporter', () => {
         
     it('test_convert_exp_histogram', () => {
         /* Test exponential histogram conversion. */
-        let metric = MockMetric("exp_histogram_metric", "s", "Exponential histogram description")
-        let dp: DataPoint<ExponentialHistogram> = MockExpHistogramDataPoint(
-            count=8,
-            sum_val=64.0,
-            min_val=2.0,
-            max_val=32.0,
-            attributes={"service": "api"}
-        )
+        // let metric = MockMetric("exp_histogram_metric", "s", "Exponential histogram description")
+        //[][][] let dp: DataPoint<ExponentialHistogram> = MockExpHistogramDataPoint(
+        //     count=8,
+        //     sum_val=64.0,
+        //     min_val=2.0,
+        //     max_val=32.0,
+        //     attributes={"service": "api"}
+        // )
+
+
+        let dp:DataPoint<ExponentialHistogram> = {
+            startTime:[0,0],
+            endTime:[1,0],
+            attributes:{"service": "api"},
+            value: {
+                count: 8,
+                sum: 64.0,
+                min: 2.0,
+                max: 32.0,
+                scale: 1,
+                zeroCount: 1,
+                positive: {
+                    offset: 1,
+                    bucketCounts: []
+                },
+                negative: {
+                    offset: 2,
+                    bucketCounts: []
+                }
+            }
+        }
+
+        /* Test gauge conversion. */
+        let metric:ExponentialHistogramMetricData = {
+            dataPointType: DataPointType.EXPONENTIAL_HISTOGRAM,
+            descriptor: {
+                name: "exp_histogram_metric",
+                unit: "s",
+                description: "Exponential histogram description",
+                valueType: ValueType.DOUBLE,
+                type: InstrumentType.HISTOGRAM
+            },
+            dataPoints: [dp],
+            aggregationTemporality: AggregationTemporality.DELTA,
+        }
         
         const [record, timestamp] = exporter['convertExpHistogram'](metric, dp);
         
@@ -746,108 +914,119 @@ describe('TestCloudWatchEMFExporter', () => {
         let records = [gauge_record, sum_record]
         let resource = new Resource({"service.name": "test-service"})
         
-        
         let result = exporter['createEmfLog'](records, resource)
+
+        expect(result).toHaveProperty('_aws')
+        expect(result._aws.CloudWatchMetrics[0].Namespace).toEqual('TestNamespace')
+        expect(result._aws.CloudWatchMetrics[0].Dimensions[0][0]).toEqual('env')
+        expect(result._aws.CloudWatchMetrics[0].Metrics[0].Name).toEqual('gauge_metric')
+        expect(result._aws.CloudWatchMetrics[0].Metrics[0].Unit).toEqual('Count')
+        expect(result._aws.CloudWatchMetrics[0].Metrics[1].Name).toEqual('sum_metric')
+        expect(result._aws.CloudWatchMetrics[0].Metrics[1].Unit).toEqual('Count')
+        expect(result).toHaveProperty('Version', "1")
+        expect(result['resource.service.name']).toEqual('test-service') // toHaveProperty() doesn't work with '.'
+        expect(result).toHaveProperty('gauge_metric', 50)
+        expect(result).toHaveProperty('sum_metric', 100)
+        expect(result).toHaveProperty('env', 'test')
         
-        self.assertIsInstance(result, dict)
-        
-        // Check that the result is JSON serializable
-        json.dumps(result)  // Should not raise exception
+        // // Sanity check that the result is JSON serializable, and doesn't throw error
+        JSON.stringify(result)
     });
     
-    //[]@patch('boto3.client')
-    //[] def test_export_success(self, mock_boto_client):
-    it('test_export_success', () => {
+    it('test_export_success', done => {
         /* Test successful export. */
         // Mock CloudWatch Logs client
-        let mock_client = Mock()
-        mock_boto_client.return_value = mock_client
-        mock_client.put_log_events.return_value = {"nextSequenceToken": "12345"}
+        sinon
+            .stub(exporter['logsClient'], 'putLogEvents')
+            .callsFake(input => {
+                    return  {"nextSequenceToken": "12345"}
+            });
         
         // Create empty metrics data to test basic export flow
-        let metrics_data = Mock()
-        metrics_data.resource_metrics = []
-        
-        let result = exporter.export(metrics_data, () => {})
-        
-        expect(result).toEqual(ExportResultCode.SUCCESS);
+        let resourceMetricsData: ResourceMetrics = {
+            resource: new Resource({}),
+            scopeMetrics: []
+        }
+
+        exporter.export(resourceMetricsData, (result) => {
+            expect(result.code).toEqual(ExportResultCode.SUCCESS);
+            done();
+        })
     });
         
-    it('test_export_failure', () => {
+    it('test_export_failure', done => {
         /* Test export failure handling. */
         // Create metrics data that will cause an exception during iteration
-        let metrics_data = Mock()
-        // Make resource_metrics raise an exception when iterated over
-        metrics_data.resource_metrics = Mock()
-        metrics_data.resource_metrics.__iter__ = Mock(side_effect=Exception("Test exception"))
+        let metrics_data: ResourceMetrics = {
+            resource: new Resource({}),
+            scopeMetrics: [(undefined as any)] // will cause an error to throw
+        }
         
-        let result = exporter.export(metrics_data, () => {})
-        
-        expect(result).toEqual(ExportResultCode.FAILED);
+        exporter.export(metrics_data, (result) => {
+            expect(result.code).toEqual(ExportResultCode.FAILED);
+            done();
+        })
     });
     
-    //[]@patch.object(CloudWatchEMFExporter, '_send_log_batch')
-    //[] def test_force_flush_with_pending_events(self, mock_send_batch):
-    it('test_force_flush_with_pending_events', () => {
+    it('test_force_flush_with_pending_events', async () => {
         /* Test force flush functionality with pending events. */
+
+        const sendLogBatchStub = sinon.stub(exporter, <any>'sendLogBatch');
+
         // Create a batch with events
         exporter['eventBatch'] = exporter['createEventBatch']()
         exporter['eventBatch']["logEvents"] = [{"message": "test", "timestamp": Date.now()}]
         
-        let result = exporter.forceFlush()
-        
-        expect(result).toBeTruthy();
-        mock_send_batch.assert_called_once()
+        await expect(exporter.forceFlush()).resolves.not.toThrow();
+        sinon.assert.calledOnce(sendLogBatchStub)
     });
         
-    it('test_force_flush_no_pending_events', () => {
+    it('test_force_flush_no_pending_events', async () => {
         /* Test force flush functionality with no pending events. */
         // No batch exists
         expect(exporter['eventBatch']).toBeUndefined()
         
-        let result = exporter.forceFlush()
-        
-        expect(result).toBeTruthy();
+        await expect(exporter.forceFlush()).resolves.not.toThrow();
     });
     
-    //[]@patch.object(CloudWatchEMFExporter, 'force_flush')
-    //[] def test_shutdown(self, mock_force_flush):
-    it('test_shutdown', () => {
+    it('test_shutdown', async () => {
         /* Test shutdown functionality. */
+
+        const forceFlushStub = sinon.stub(exporter, 'forceFlush')
         
         // Ensure this call doesn't reject
-        let result = await exporter.shutdown()
+        await exporter.shutdown()
 
-        mock_force_flush.assert_called_once_with(5000)
+        sinon.assert.calledOnce(forceFlushStub);
     });
     
 
     
-    function _create_test_metrics_data(self) {
-        /* Helper method to create test metrics data. */
-        // Create a gauge metric data point
-        let gauge_dp = MockDataPoint(value=25.0, attributes={"env": "test"})
+//[][]     function _create_test_metrics_data(self) {
+//         /* Helper method to create test metrics data. */
+//         // Create a gauge metric data point
+//         let gauge_dp = MockDataPoint(value=25.0, attributes={"env": "test"})
         
-        // Create gauge metric data using MockGaugeData
-        let gauge_data = MockGaugeData([gauge_dp])
+//         // Create gauge metric data using MockGaugeData
+//         let gauge_data = MockGaugeData([gauge_dp])
         
-        // Create gauge metric
-        let gauge_metric = Mock()
-        gauge_metric.name = "test_gauge"
-        gauge_metric.unit = "Count"
-        gauge_metric.description = "Test gauge"
-        gauge_metric.data = gauge_data
+//         // Create gauge metric
+//         let gauge_metric = Mock()
+//         gauge_metric.name = "test_gauge"
+//         gauge_metric.unit = "Count"
+//         gauge_metric.description = "Test gauge"
+//         gauge_metric.data = gauge_data
         
-        // Create scope metrics
-        let scope_metrics = MockScopeMetrics(metrics=[gauge_metric])
+//         // Create scope metrics
+//         let scope_metrics = MockScopeMetrics(metrics=[gauge_metric])
         
-        // Create resource metrics
-        let resource_metrics = MockResourceMetrics(scope_metrics=[scope_metrics])
+//         // Create resource metrics
+//         let resource_metrics = MockResourceMetrics(scope_metrics=[scope_metrics])
         
-        // Create metrics data
-        let metrics_data = Mock()
-        metrics_data.resource_metrics = [resource_metrics]
+//         // Create metrics data
+//         let metrics_data = Mock()
+//         metrics_data.resource_metrics = [resource_metrics]
         
-        return metrics_data
-  }
+//         return metrics_data
+//   }
 });
