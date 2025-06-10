@@ -22,8 +22,9 @@ import {
   PutLogEventsCommandInput,
 } from '@aws-sdk/client-cloudwatch-logs';
 import * as nock from 'nock';
-import { CloudWatchEMFExporter, CW_MAX_REQUEST_EVENT_COUNT } from '../src/otlp-aws-emf-exporter';
-import { AggregationTemporality } from '@opentelemetry/sdk-metrics';
+import { CloudWatchEMFExporter, createEmfExporter, CW_MAX_EVENT_PAYLOAD_BYTES, CW_MAX_REQUEST_EVENT_COUNT, CW_MAX_REQUEST_PAYLOAD_BYTES, CW_TRUNCATED_SUFFIX, Record, RECORD_DATA_TYPES, RecordValue } from '../src/otlp-aws-emf-exporter';
+import { AggregationTemporality, DataPoint, ExponentialHistogram, Histogram } from '@opentelemetry/sdk-metrics';
+import { ExportResultCode } from '@opentelemetry/core';
 
 
 describe('TestBatchProcessing', () => {
@@ -78,7 +79,7 @@ describe('TestBatchProcessing', () => {
         /* Test log event validation with valid event. */
         let log_event = {
             "message": "test message",
-            "timestamp": int(time.time() * 1000)
+            "timestamp": Date.now()
         }
         
         let result = exporter['validateLogEvent'](log_event)
@@ -89,7 +90,7 @@ describe('TestBatchProcessing', () => {
         /* Test log event validation with empty message. */
         let log_event = {
             "message": "",
-            "timestamp": int(time.time() * 1000)
+            "timestamp": Date.now()
         }
         
         let result = exporter['validateLogEvent'](log_event)
@@ -99,23 +100,23 @@ describe('TestBatchProcessing', () => {
     it('test_validate_log_event_oversized_message', () => {
         /* Test log event validation with oversized message. */
         // Create a message larger than the maximum allowed size
-        let large_message = "x" * (exporter.CW_MAX_EVENT_PAYLOAD_BYTES + 100)
+        let large_message = "x".repeat(CW_MAX_EVENT_PAYLOAD_BYTES + 100)
         let log_event = {
             "message": large_message,
-            "timestamp": int(time.time() * 1000)
+            "timestamp": Date.now()
         }
         
         let result = exporter['validateLogEvent'](log_event)
         expect(result).toBeTruthy();  // Should still be valid after truncation
         // Check that message was truncated
-        self.assertLess(log_event["message"].length, large_message.length)
-        expect(log_event["message"].endswith(exporter.CW_TRUNCATED_SUFFIX)).toBeTruthy();
+        expect(log_event["message"].length).toBeLessThan(large_message.length)
+        expect(log_event["message"].endsWith(CW_TRUNCATED_SUFFIX)).toBeTruthy();
     });
         
     it('test_validate_log_event_old_timestamp', () => {
         /* Test log event validation with very old timestamp. */
         // Timestamp from 15 days ago
-        let old_timestamp = int(time.time() * 1000) - (15 * 24 * 60 * 60 * 1000)
+        let old_timestamp = Date.now() - (15 * 24 * 60 * 60 * 1000)
         let log_event = {
             "message": "test message",
             "timestamp": old_timestamp
@@ -128,7 +129,7 @@ describe('TestBatchProcessing', () => {
     it('test_validate_log_event_future_timestamp', () => {
         /* Test log event validation with future timestamp. */
         // Timestamp 3 hours in the future
-        let future_timestamp = int(time.time() * 1000) + (3 * 60 * 60 * 1000)
+        let future_timestamp = Date.now() + (3 * 60 * 60 * 1000)
         let log_event = {
             "message": "test message",
             "timestamp": future_timestamp
@@ -142,51 +143,51 @@ describe('TestBatchProcessing', () => {
         /* Test batch limit checking by event count. */
         let batch = exporter['createEventBatch']()
         // Simulate batch with maximum events
-        batch["logEvents"] = [{"message": "test"}] * CW_MAX_REQUEST_EVENT_COUNT
+        batch["logEvents"] = Array(CW_MAX_REQUEST_EVENT_COUNT).fill({"message": "test"})
         
-        let result = exporter.event_batch_exceeds_limit(batch, 100)
+        let result = exporter['eventBatchExceedsLimit'](batch, 100)
         expect(result).toBeTruthy();
     });
         
     it('test_event_batch_exceeds_limit_by_size', () => {
         /* Test batch limit checking by byte size. */
         let batch = exporter['createEventBatch']()
-        batch["byteTotal"] = exporter.CW_MAX_REQUEST_PAYLOAD_BYTES - 50
+        batch["byteTotal"] = CW_MAX_REQUEST_PAYLOAD_BYTES - 50
         
-        let result = exporter.event_batch_exceeds_limit(batch, 100)
+        let result = exporter['eventBatchExceedsLimit'](batch, 100)
         expect(result).toBeTruthy();
     });
         
     it('test_event_batch_within_limits', () => {
         /* Test batch limit checking within limits. */
         let batch = exporter['createEventBatch']()
-        batch["logEvents"] = [{"message": "test"}] * 10
+        batch["logEvents"] = Array(10).fill({"message": "test"})
         batch["byteTotal"] = 1000
         
-        let result = exporter.event_batch_exceeds_limit(batch, 100)
+        let result = exporter['eventBatchExceedsLimit'](batch, 100)
         expect(result).toBeFalsy();
     });
         
     it('test_is_batch_active_new_batch', () => {
         /* Test batch activity check for new batch. */
         let batch = exporter['createEventBatch']()
-        let current_time = int(time.time() * 1000)
+        let current_time = Date.now()
         
-        let result = exporter.is_batch_active(batch, current_time)
+        let result = exporter['isBatchActive'](batch, current_time)
         expect(result).toBeTruthy();
     });
         
     it('test_is_batch_active_24_hour_span', () => {
         /* Test batch activity check for 24+ hour span. */
         let batch = exporter['createEventBatch']()
-        let current_time = int(time.time() * 1000)
+        let current_time = Date.now()
         batch["minTimestampMs"] = current_time
         batch["maxTimestampMs"] = current_time
         
         // Test with timestamp 25 hours in the future
         let future_timestamp = current_time + (25 * 60 * 60 * 1000)
         
-        let result = exporter.is_batch_active(batch, future_timestamp)
+        let result = exporter['isBatchActive'](batch, future_timestamp)
         expect(result).toBeFalsy();
     });
         
@@ -195,11 +196,11 @@ describe('TestBatchProcessing', () => {
         let batch = exporter['createEventBatch']()
         let log_event = {
             "message": "test message",
-            "timestamp": int(time.time() * 1000)
+            "timestamp": Date.now()
         }
         let event_size = 100
         
-        exporter.append_to_batch(batch, log_event, event_size)
+        exporter['appendToBatch'](batch, log_event, event_size)
         
         expect(batch["logEvents"].length).toEqual(1);
         expect(batch["byteTotal"]).toEqual(event_size);
@@ -210,7 +211,7 @@ describe('TestBatchProcessing', () => {
     it('test_sort_log_events', () => {
         /* Test sorting log events by timestamp. */
         let batch = exporter['createEventBatch']()
-        let current_time = int(time.time() * 1000)
+        let current_time = Date.now()
         
         // Add events with timestamps in reverse order
         let events = [
@@ -219,7 +220,7 @@ describe('TestBatchProcessing', () => {
             {"message": "second", "timestamp": current_time + 1000}
         ]
         
-        batch["logEvents"] = events.copy()
+        batch["logEvents"] = {...events}
         exporter['sortLogEvents'](batch)
         
         // Check that events are now sorted by timestamp
@@ -241,10 +242,10 @@ describe('TestCreateEMFExporter', () => {
         mock_client.describe_log_groups.return_value = {"logGroups": []}
         mock_client.create_log_group.return_value = {}
         
-        let exporter = create_emf_exporter()
+        let exporter = createEmfExporter()
         
         expect(exporter).toBeInstanceOf(CloudWatchEMFExporter);
-        expect(exporter.namespace).toEqual("OTelPython");
+        expect(exporter['namespace']).toEqual("OTelPython");
     });
     
     //[] //[]@patch('boto3.client')
@@ -256,15 +257,16 @@ describe('TestCreateEMFExporter', () => {
         mock_client.describe_log_groups.return_value = {"logGroups": []}
         mock_client.create_log_group.return_value = {}
         
-        let exporter = create_emf_exporter(
-            namespace="CustomNamespace",
-            log_group_name="/custom/log/group",
-            aws_region="us-west-2"
+        let exporter = createEmfExporter(
+            "CustomNamespace",
+            "/custom/log/group",
+            undefined,
+            "us-west-2"
         )
         
         expect(exporter).toBeInstanceOf(CloudWatchEMFExporter);
-        expect(exporter.namespace).toEqual("CustomNamespace");
-        expect(exporter.log_group_name).toEqual("/custom/log/group");
+        expect(exporter['namespace']).toEqual("CustomNamespace");
+        expect(exporter['logGroupName']).toEqual("/custom/log/group");
     });
     
     //[]@patch('boto3.client')
@@ -278,8 +280,8 @@ describe('TestCreateEMFExporter', () => {
         mock_client.describe_log_groups.return_value = {"logGroups": []}
         mock_client.create_log_group.return_value = {}
         
-        let exporter = create_emf_exporter(debug=True)
-        
+        let exporter = createEmfExporter('OTelJavaScript', '/aws/otel/javascript', undefined, undefined, true);
+
         expect(exporter).toBeInstanceOf(CloudWatchEMFExporter);
         mock_logging_config.assert_called_once()
     });
@@ -326,7 +328,7 @@ describe('TestSendLogBatch', () => {
     it('test_send_log_batch_with_events', () => {
         /* Test sending log batch with events. */
         let batch = exporter['createEventBatch']()
-        let current_time = int(time.time() * 1000)
+        let current_time = Date.now()
         
         // Add some log events
         let events = [
@@ -334,8 +336,9 @@ describe('TestSendLogBatch', () => {
             {"message": "second message", "timestamp": current_time + 1000}
         ]
         
-        for event in events:
-            batch["logEvents"].append(event)
+        for (const event of events) {
+            batch["logEvents"].push(event)
+        }
         
         exporter['sendLogBatch'](batch)
         
@@ -350,7 +353,7 @@ describe('TestSendLogBatch', () => {
     it('test_send_log_batch_sorts_events', () => {
         /* Test that log batch sorting works correctly. */
         let batch = exporter['createEventBatch']()
-        let current_time = int(time.time() * 1000)
+        let current_time = Date.now()
         
         // Add events in reverse timestamp order
         let events = [
@@ -358,8 +361,9 @@ describe('TestSendLogBatch', () => {
             {"message": "first", "timestamp": current_time}
         ]
         
-        for event in events:
-            batch["logEvents"].append(event)
+        for (const event of events) {
+            batch["logEvents"].push(event)
+        }
         
         exporter['sendLogBatch'](batch)
         
@@ -374,7 +378,7 @@ describe('TestSendLogBatch', () => {
     it('test_send_log_batch_handles_exceptions', () => {
         /* Test that send_log_batch handles exceptions properly. */
         let batch = exporter['createEventBatch']()
-        batch["logEvents"].append({"message": "test", "timestamp": int(time.time() * 1000)})
+        batch["logEvents"].append({"message": "test", "timestamp": Date.now()})
         
         // Make create_log_group raise an exception (this happens first)
         self.mock_client.create_log_group.side_effect = Exception("AWS error")
@@ -387,63 +391,61 @@ describe('TestSendLogBatch', () => {
 describe('TestSendLogEvent', () => {
 //[] class TestSendLogEvent(unittest.TestCase):
     /* Test individual log event sending functionality. */
+    let exporter: CloudWatchEMFExporter;
     
     //[]@patch('boto3.Session')
     before(() => {
     //[] def setUp(self, mock_session):
         /* Set up test fixtures. */
         // Mock the boto3 client to avoid AWS calls
-        self.mock_client = Mock()
-        self.mock_client.describe_log_groups.return_value = {"logGroups": []}
-        self.mock_client.create_log_group.return_value = {}
-        self.mock_client.create_log_stream.return_value = {}
-        self.mock_client.put_log_events.return_value = {"nextSequenceToken": "12345"}
+        //[] self.mock_client = Mock()
+        // self.mock_client.describe_log_groups.return_value = {"logGroups": []}
+        // self.mock_client.create_log_group.return_value = {}
+        // self.mock_client.create_log_stream.return_value = {}
+        // self.mock_client.put_log_events.return_value = {"nextSequenceToken": "12345"}
         
-        // Create a proper exception class for ResourceAlreadyExistsException
-        class ResourceAlreadyExistsException(Exception):
-            pass
+        // // Create a proper exception class for ResourceAlreadyExistsException
+        // class ResourceAlreadyExistsException(Exception):
+        //     pass
         
-        self.mock_client.exceptions.ResourceAlreadyExistsException = ResourceAlreadyExistsException
+        // self.mock_client.exceptions.ResourceAlreadyExistsException = ResourceAlreadyExistsException
         
-        // Mock session to return our mock client
-        let mock_session_instance = Mock()
-        mock_session.return_value = mock_session_instance
-        mock_session_instance.client.return_value = self.mock_client
+        // // Mock session to return our mock client
+        // let mock_session_instance = Mock()
+        // mock_session.return_value = mock_session_instance
+        // mock_session_instance.client.return_value = self.mock_client
         
-        exporter = CloudWatchEMFExporter(
-            namespace="TestNamespace",
-            log_group_name="test-log-group"
-        )
+        exporter = new CloudWatchEMFExporter('TestNamespace', 'test-log-group', undefined, undefined, undefined, true, AggregationTemporality.DELTA, {})
     });
         
     it('test_send_log_event_creates_batch', () => {
         /* Test that sending first log event creates a batch. */
         let log_event = {
             "message": "test message",
-            "timestamp": int(time.time() * 1000)
+            "timestamp": Date.now()
         }
         
         // Initially no batch should exist
-        expect(exporter.event_batch).toBeUndefined()
+        expect(exporter['eventBatch']).toBeUndefined()
         
-        exporter.send_log_event(log_event)
+        exporter['sendLogEvent'](log_event)
         
         // Batch should now be created
-        self.assertIsNotNone(exporter.event_batch)
-        expect(exporter.event_batch["logEvents"].length).toEqual(1);
+        expect(exporter['eventBatch']).not.toBeUndefined();
+        expect(exporter['eventBatch'] ? exporter['eventBatch']["logEvents"].length : -1).toEqual(1);
     });
         
     it('test_send_log_event_invalid_event', () => {
         /* Test sending invalid log event. */
         let log_event = {
             "message": "",  // Empty message should be invalid
-            "timestamp": int(time.time() * 1000)
+            "timestamp": Date.now()
         }
         
-        exporter.send_log_event(log_event)
+        exporter['sendLogEvent'](log_event)
         
         // Batch should not be created for invalid event
-        expect(exporter.event_batch).toBeUndefined()
+        expect(exporter['eventBatch']).toBeUndefined()
       })
     
     //[]@patch.object(CloudWatchEMFExporter, '_send_log_batch')
@@ -453,15 +455,15 @@ describe('TestSendLogEvent', () => {
         // First, add an event to create a batch
         let log_event = {
             "message": "test message",
-            "timestamp": int(time.time() * 1000)
+            "timestamp": Date.now()
         }
-        exporter.send_log_event(log_event)
+        exporter['sendLogEvent'](log_event)
         
-        // Now simulate batch being at limit
-        exporter.event_batch["logEvents"] = [{"message": "test"}] * exporter.CW_MAX_REQUEST_EVENT_COUNT
+        // Now simulate batch being at limit        
+        exporter['eventBatch']!["logEvents"] = Array(CW_MAX_REQUEST_EVENT_COUNT).fill({"message": "test"})
         
         // Send another event that should trigger batch send
-        exporter.send_log_event(log_event)
+        exporter['sendLogEvent'](log_event)
         
         // Verify batch was sent
         mock_send_batch.assert_called()
@@ -471,6 +473,7 @@ describe('TestSendLogEvent', () => {
 describe('TestCloudWatchEMFExporter', () => {
 //[] class TestCloudWatchEMFExporter(unittest.TestCase):
     /* Test CloudWatchEMFExporter class. */
+    let exporter: CloudWatchEMFExporter;
     
     //[]@patch('boto3.client')
     before(() => {
@@ -481,18 +484,15 @@ describe('TestCloudWatchEMFExporter', () => {
         mock_boto_client.return_value = mock_client
         mock_client.describe_log_groups.return_value = {"logGroups": []}
         mock_client.create_log_group.return_value = {}
-        
-        exporter = CloudWatchEMFExporter(
-            namespace="TestNamespace",
-            log_group_name="test-log-group"
-        )
+
+        exporter = new CloudWatchEMFExporter('TestNamespace', 'test-log-group', undefined, undefined, undefined, true, AggregationTemporality.DELTA, {})
     });
         
     it('test_initialization', () => {
         /* Test exporter initialization. */
-        expect(exporter.namespace).toEqual("TestNamespace");
-        self.assertIsNotNone(exporter.log_stream_name)
-        expect(exporter.metric_declarations).toEqual([]);
+        expect(exporter['namespace']).toEqual("TestNamespace");
+        expect(exporter['logStreamName']).not.toBeUndefined();
+        expect(exporter['metricDeclarations']).toEqual([]);
     });
     
     //[]@patch('boto3.client')
@@ -505,33 +505,35 @@ describe('TestCloudWatchEMFExporter', () => {
         mock_client.describe_log_groups.return_value = {"logGroups": []}
         mock_client.create_log_group.return_value = {}
         
-        let exporter = CloudWatchEMFExporter(
-            namespace="CustomNamespace",
-            log_group_name="custom-log-group",
-            log_stream_name="custom-stream",
-            aws_region="us-west-2"
-        )
-        expect(exporter.namespace).toEqual("CustomNamespace");
-        expect(exporter.log_group_name).toEqual("custom-log-group");
-        expect(exporter.log_stream_name).toEqual("custom-stream");
+        //[]
+        let newExporter = new CloudWatchEMFExporter(
+            "CustomNamespace",
+            "custom-log-group",
+            "custom-stream",
+            "us-west-2",
+            undefined, true, AggregationTemporality.DELTA, {})
+
+        expect(newExporter['namespace']).toEqual("CustomNamespace");
+        expect(newExporter['logGroupName']).toEqual("custom-log-group");
+        expect(newExporter['logStreamName']).toEqual("custom-stream");
     });
-        
+
     it('test_get_unit_mapping', () => {
         /* Test unit mapping functionality. */
         // Test known units
-        expect(exporter.get_unit(Mock(unit="ms"))).toEqual("Milliseconds");
-        expect(exporter.get_unit(Mock(unit="s"))).toEqual("Seconds");
-        expect(exporter.get_unit(Mock(unit="By"))).toEqual("Bytes");
-        expect(exporter.get_unit(Mock(unit="%"))).toEqual("Percent");
+        expect(exporter['getUnit']({ name: 'testName', unit: 'ms', description: 'testDescription'})).toEqual("Milliseconds");
+        expect(exporter['getUnit']({ name: 'testName', unit: 's', description: 'testDescription'})).toEqual("Seconds");
+        expect(exporter['getUnit']({ name: 'testName', unit: 'By', description: 'testDescription'})).toEqual("Bytes");
+        expect(exporter['getUnit']({ name: 'testName', unit: '%', description: 'testDescription'})).toEqual("Percent");
         
         // Test unknown unit
-        expect(exporter.get_unit(Mock(unit="unknown"))).toEqual("unknown");
+        expect(exporter['getUnit']({ name: 'testName', unit: 'unknown', description: 'testDescription'})).toEqual("unknown");
         
         // Test empty unit (should return None due to falsy check)
-        expect(exporter.get_unit(Mock(unit="").toBeUndefined()))
+        expect(exporter['getUnit']({ name: 'testName', unit: '', description: 'testDescription'})).toBeUndefined()
         
-        // Test None unit
-        expect(exporter.get_unit(Mock(unit=None).toBeUndefined()))
+        //[][not needed...] Test undefined unit
+        expect(exporter['getUnit']({ name: 'testName', unit: undefined, description: 'testDescription'} as any)).toBeUndefined();
     });
         
     it('test_get_metric_name', () => {
@@ -540,16 +542,16 @@ describe('TestCloudWatchEMFExporter', () => {
         let record = Mock()
         record.instrument = Mock()
         record.instrument.name = "test_metric"
-        del record.name  // Ensure record.name doesn't exist
+        delete record.name  // Ensure record.name doesn't exist
         
-        let result = exporter.get_metric_name(record)
+        let result = exporter['getMetricName'](record)
         expect(result).toEqual("test_metric");
         
         // Test with record that has direct name attribute
         let record_with_name = Mock()
         record_with_name.name = "direct_metric"
         
-        result2 = exporter.get_metric_name(record_with_name)
+        let result2 = exporter['getMetricName'](record_with_name)
         expect(result2).toEqual("direct_metric");
     });
         
@@ -557,34 +559,36 @@ describe('TestCloudWatchEMFExporter', () => {
         /* Test dimension names extraction. */
         let attributes = {"service.name": "test-service", "env": "prod", "region": "us-east-1"}
         
-        let result = exporter.get_dimension_names(attributes)
+        let result = exporter['getDimensionNames'](attributes)
         
         // Should return all attribute keys
-        expect(set(result)).toEqual({"service.name", "env", "region"});
+        expect(result).toContain('service.name')
+        expect(result).toContain('env')
+        expect(result).toContain('region')
     });
         
     it('test_get_attributes_key', () => {
         /* Test attributes key generation. */
         let attributes = {"service": "test", "env": "prod"}
         
-        let result = exporter.get_attributes_key(attributes)
+        let result = exporter['getAttributesKey'](attributes)
         
         // Should be a string representation of sorted attributes
         expect(typeof result).toEqual('string');
-        self.assertIn("service", result)
-        self.assertIn("test", result)
-        self.assertIn("env", result)
-        self.assertIn("prod", result)
+        expect(result).toHaveProperty('service')
+        expect(result).toHaveProperty("test")
+        expect(result).toHaveProperty("env")
+        expect(result).toHaveProperty("prod")
     });
         
     it('test_get_attributes_key_consistent', () => {
         /* Test that attributes key generation is consistent. */
         // Same attributes in different order should produce same key
-        attrs1 = {"b": "2", "a": "1"}
-        attrs2 = {"a": "1", "b": "2"}
+        const attrs1 = {"b": "2", "a": "1"}
+        const attrs2 = {"a": "1", "b": "2"}
         
-        key1 = exporter.get_attributes_key(attrs1)
-        key2 = exporter.get_attributes_key(attrs2)
+        const key1 = exporter['getAttributesKey'](attrs1)
+        const key2 = exporter['getAttributesKey'](attrs2)
         
         expect(key1).toEqual(key2);
     });
@@ -595,7 +599,7 @@ describe('TestCloudWatchEMFExporter', () => {
         record.attributes = {"env": "test"}
         let timestamp_ms = 1234567890
         
-        let result = exporter.group_by_attributes_and_timestamp(record, timestamp_ms)
+        let result = exporter['groupByAttributesAndTimestamp'](record, timestamp_ms)
         
         // Should return a tuple with attributes key and timestamp
         self.assertIsInstance(result, tuple)
@@ -605,13 +609,13 @@ describe('TestCloudWatchEMFExporter', () => {
         
     it('test_generate_log_stream_name', () => {
         /* Test log stream name generation. */
-        name1 = exporter.generate_log_stream_name()
-        name2 = exporter.generate_log_stream_name()
+        let name1 = exporter['generateLogStreamName']()
+        let name2 = exporter['generateLogStreamName']()
         
         // Should generate unique names
-        self.assertNotEqual(name1, name2)
-        expect(name1.startswith("otel-python-")).toBeTruthy();
-        expect(name2.startswith("otel-python-")).toBeTruthy();
+        expect(name1).not.toEqual(name2)
+        expect(name1.startsWith("otel-python-")).toBeTruthy();
+        expect(name2.startsWith("otel-python-")).toBeTruthy();
     });
         
     it('test_normalize_timestamp', () => {
@@ -619,16 +623,16 @@ describe('TestCloudWatchEMFExporter', () => {
         let timestamp_ns = 1609459200000000000  // 2021-01-01 00:00:00 in nanoseconds
         let expected_ms = 1609459200000  // Same time in milliseconds
         
-        let result = exporter.normalize_timestamp(timestamp_ns)
+        let result = exporter['normalizeTimestamp']([0, timestamp_ns])
         expect(result).toEqual(expected_ms);
     });
         
     it('test_create_metric_record', () => {
         /* Test metric record creation. */
-        let record = exporter.create_metric_record("test_metric", "Count", "Test description")
+        let record = exporter['createMetricRecord']("test_metric", "Count", "Test description")
         
-        self.assertIsNotNone(record)
-        self.assertIsNotNone(record.instrument)
+        expect(record).not.toBeUndefined();
+        expect(record.instrument).not.toBeUndefined();
         expect(record.instrument.name).toEqual("test_metric");
         expect(record.instrument.unit).toEqual("Count");
         expect(record.instrument.description).toEqual("Test description");
@@ -637,11 +641,11 @@ describe('TestCloudWatchEMFExporter', () => {
     it('test_convert_gauge', () => {
         /* Test gauge conversion. */
         let metric = MockMetric("gauge_metric", "Count", "Gauge description")
-        let dp = MockDataPoint(value=42.5, attributes={"key": "value"})
+        let dp:DataPoint<number> = MockDataPoint(value=42.5, attributes={"key": "value"})
         
-        record, timestamp = exporter.convert_gauge(metric, dp)
+        const [record, timestamp] = exporter['convertGauge'](metric, dp);
         
-        self.assertIsNotNone(record)
+        expect(record).not.toBeUndefined();
         expect(record.instrument.name).toEqual("gauge_metric");
         expect(record.value).toEqual(42.5);
         expect(record.attributes).toEqual({"key": "value"});
@@ -651,14 +655,14 @@ describe('TestCloudWatchEMFExporter', () => {
     it('test_convert_sum', () => {
         /* Test sum conversion with the bug fix. */
         let metric = MockMetric("sum_metric", "Count", "Sum description")
-        let dp = MockDataPoint(value=100.0, attributes={"env": "test"})
+        let dp:DataPoint<number> = MockDataPoint(value=100.0, attributes={"env": "test"})
         
-        record, timestamp = exporter.convert_sum(metric, dp)
+        const [record, timestamp] = exporter['convertSum'](metric, dp);
         
-        self.assertIsNotNone(record)
+        expect(record).not.toBeUndefined();
         expect(record.instrument.name).toEqual("sum_metric");
-        self.assertHasAttr(record, 'sum_data')
-        expect(record.sum_data.value).toEqual(100.0);
+        expect(record).toHaveProperty('sumData');
+        expect(record.sumData?.value).toEqual(100.0);
         expect(record.attributes).toEqual({"env": "test"});
         expect(typeof timestamp).toEqual('number');
     });
@@ -666,7 +670,7 @@ describe('TestCloudWatchEMFExporter', () => {
     it('test_convert_histogram', () => {
         /* Test histogram conversion. */
         let metric = MockMetric("histogram_metric", "ms", "Histogram description")
-        let dp = MockHistogramDataPoint(
+        let dp: DataPoint<Histogram> = MockHistogramDataPoint(
             count=10,
             sum_val=150.0,
             min_val=5.0,
@@ -674,11 +678,11 @@ describe('TestCloudWatchEMFExporter', () => {
             attributes={"region": "us-east-1"}
         )
         
-        record, timestamp = exporter.convert_histogram(metric, dp)
+        const [record, timestamp] = exporter['convertHistogram'](metric, dp);
         
-        self.assertIsNotNone(record)
+        expect(record).not.toBeUndefined();
         expect(record.instrument.name).toEqual("histogram_metric");
-        self.assertHasAttr(record, 'histogram_data')
+        expect(record).toHaveProperty('histogramData');
         
         let expected_value = {
             "Count": 10,
@@ -686,7 +690,7 @@ describe('TestCloudWatchEMFExporter', () => {
             "Min": 5.0,
             "Max": 25.0
         }
-        expect(record.histogram_data.value).toEqual(expected_value);
+        expect(record.histogramData?.value).toEqual(expected_value);
         expect(record.attributes).toEqual({"region": "us-east-1"});
         expect(typeof timestamp).toEqual('number');
     });
@@ -694,7 +698,7 @@ describe('TestCloudWatchEMFExporter', () => {
     it('test_convert_exp_histogram', () => {
         /* Test exponential histogram conversion. */
         let metric = MockMetric("exp_histogram_metric", "s", "Exponential histogram description")
-        let dp = MockExpHistogramDataPoint(
+        let dp: DataPoint<ExponentialHistogram> = MockExpHistogramDataPoint(
             count=8,
             sum_val=64.0,
             min_val=2.0,
@@ -702,19 +706,19 @@ describe('TestCloudWatchEMFExporter', () => {
             attributes={"service": "api"}
         )
         
-        record, timestamp = exporter.convert_exp_histogram(metric, dp)
+        const [record, timestamp] = exporter['convertExpHistogram'](metric, dp);
         
-        self.assertIsNotNone(record)
+        expect(record).not.toBeUndefined();
         expect(record.instrument.name).toEqual("exp_histogram_metric");
-        self.assertHasAttr(record, 'exp_histogram_data')
+        expect(record).toHaveProperty('expHistogramData');
         
-        let exp_data = record.exp_histogram_data.value
-        self.assertIn("Values", exp_data)
-        self.assertIn("Counts", exp_data)
-        expect(exp_data["Count"]).toEqual(8);
-        expect(exp_data["Sum"]).toEqual(64.0);
-        expect(exp_data["Min"]).toEqual(2.0);
-        expect(exp_data["Max"]).toEqual(32.0);
+        const exp_data = record.expHistogramData?.value
+        expect(exp_data).toHaveProperty("Values")
+        expect(exp_data).toHaveProperty("Counts")
+        expect((exp_data as RecordValue)["Count"]).toEqual(8);
+        expect((exp_data as RecordValue)["Sum"]).toEqual(64.0);
+        expect((exp_data as RecordValue)["Min"]).toEqual(2.0);
+        expect((exp_data as RecordValue)["Max"]).toEqual(32.0);
         expect(record.attributes).toEqual({"service": "api"});
         expect(typeof timestamp).toEqual('number');
     });
@@ -722,21 +726,28 @@ describe('TestCloudWatchEMFExporter', () => {
     it('test_create_emf_log', () => {
         /* Test EMF log creation. */
         // Create test records
-        let gauge_record = exporter.create_metric_record("gauge_metric", "Count", "Gauge")
-        gauge_record.value = 50.0
-        gauge_record.timestamp = int(time.time() * 1000)
-        gauge_record.attributes = {"env": "test"}
+        let gauge_record: Record = {
+          ...exporter['createMetricRecord']("gauge_metric", "Count", "Gauge"),
+          value: 50.0,
+          timestamp: Date.now(),
+          attributes: {"env": "test"}
+        }
         
-        let sum_record = exporter.create_metric_record("sum_metric", "Count", "Sum")
-        sum_record.sum_data = type('SumData', (), {})()
-        sum_record.sum_data.value = 100.0
-        sum_record.timestamp = int(time.time() * 1000)
-        sum_record.attributes = {"env": "test"}
+        let sum_record: Record = {
+          ...exporter['createMetricRecord']("sum_metric", "Count", "Sum"),
+          sumData: {
+            value: 100.0,
+            type: RECORD_DATA_TYPES.SUM_DATA
+          },
+          timestamp: Date.now(),
+          attributes: {"env": "test"}
+        }
         
         let records = [gauge_record, sum_record]
-        let resource = Resource.create({"service.name": "test-service"})
+        let resource = new Resource({"service.name": "test-service"})
         
-        let result = exporter.create_emf_log(records, resource)
+        
+        let result = exporter['createEmfLog'](records, resource)
         
         self.assertIsInstance(result, dict)
         
@@ -757,9 +768,9 @@ describe('TestCloudWatchEMFExporter', () => {
         let metrics_data = Mock()
         metrics_data.resource_metrics = []
         
-        let result = exporter.export(metrics_data)
+        let result = exporter.export(metrics_data, () => {})
         
-        expect(result).toEqual(MetricExportResult.SUCCESS);
+        expect(result).toEqual(ExportResultCode.SUCCESS);
     });
         
     it('test_export_failure', () => {
@@ -770,9 +781,9 @@ describe('TestCloudWatchEMFExporter', () => {
         metrics_data.resource_metrics = Mock()
         metrics_data.resource_metrics.__iter__ = Mock(side_effect=Exception("Test exception"))
         
-        let result = exporter.export(metrics_data)
+        let result = exporter.export(metrics_data, () => {})
         
-        expect(result).toEqual(MetricExportResult.FAILURE);
+        expect(result).toEqual(ExportResultCode.FAILED);
     });
     
     //[]@patch.object(CloudWatchEMFExporter, '_send_log_batch')
@@ -780,10 +791,10 @@ describe('TestCloudWatchEMFExporter', () => {
     it('test_force_flush_with_pending_events', () => {
         /* Test force flush functionality with pending events. */
         // Create a batch with events
-        exporter.event_batch = exporter['createEventBatch']()
-        exporter.event_batch["logEvents"] = [{"message": "test", "timestamp": int(time.time() * 1000)}]
+        exporter['eventBatch'] = exporter['createEventBatch']()
+        exporter['eventBatch']["logEvents"] = [{"message": "test", "timestamp": Date.now()}]
         
-        let result = exporter.force_flush()
+        let result = exporter.forceFlush()
         
         expect(result).toBeTruthy();
         mock_send_batch.assert_called_once()
@@ -792,9 +803,9 @@ describe('TestCloudWatchEMFExporter', () => {
     it('test_force_flush_no_pending_events', () => {
         /* Test force flush functionality with no pending events. */
         // No batch exists
-        expect(exporter._event_batch).toBeUndefined()
+        expect(exporter['eventBatch']).toBeUndefined()
         
-        let result = exporter.force_flush()
+        let result = exporter.forceFlush()
         
         expect(result).toBeTruthy();
     });
@@ -803,11 +814,10 @@ describe('TestCloudWatchEMFExporter', () => {
     //[] def test_shutdown(self, mock_force_flush):
     it('test_shutdown', () => {
         /* Test shutdown functionality. */
-        mock_force_flush.return_value = True
         
-        let result = exporter.shutdown(timeout_millis=5000)
-        
-        expect(result).toBeTruthy();
+        // Ensure this call doesn't reject
+        let result = await exporter.shutdown()
+
         mock_force_flush.assert_called_once_with(5000)
     });
     
