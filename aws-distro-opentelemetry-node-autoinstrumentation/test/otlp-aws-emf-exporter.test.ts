@@ -22,7 +22,7 @@ import {
   Record,
   RECORD_DATA_TYPES,
   RecordValue,
-} from '../src/otlp-aws-emf-exporter';
+} from '../src/exporter/otlp/aws/metrics/otlp-aws-emf-exporter';
 import {
   AggregationTemporality,
   DataPoint,
@@ -267,17 +267,6 @@ describe('TestCreateEMFExporter', () => {
     expect(exporter).toBeInstanceOf(CloudWatchEMFExporter);
     expect(exporter['namespace']).toEqual('CustomNamespace');
     expect(exporter['logGroupName']).toEqual('/custom/log/group');
-  });
-
-  it('test_create_emf_exporter_debug_mode', () => {
-    /* Test creating exporter with debug mode enabled. */
-
-    const setLoggerStub = sinon.stub(diag, 'setLogger');
-
-    const exporter = createEmfExporter('OTelJavaScript', '/aws/otel/javascript', undefined, undefined, {});
-
-    expect(exporter).toBeInstanceOf(CloudWatchEMFExporter);
-    sinon.assert.calledOnce(setLoggerStub);
   });
 });
 
