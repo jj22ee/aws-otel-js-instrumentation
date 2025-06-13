@@ -7,15 +7,7 @@
  */
 
 import { Attributes, diag, HrTime } from '@opentelemetry/api';
-import {
-  CloudWatchLogsClient,
-  CloudWatchLogsClientConfig,
-  DescribeLogGroupsCommand,
-  CreateLogGroupCommand,
-  CreateLogStreamCommand,
-  PutLogEventsCommand,
-  PutLogEventsCommandInput,
-} from '@aws-sdk/client-cloudwatch-logs';
+import { CloudWatchLogsClientConfig, PutLogEventsCommandInput, CloudWatchLogs } from '@aws-sdk/client-cloudwatch-logs';
 import {
   AggregationTemporality,
   DataPoint,
@@ -32,25 +24,26 @@ import {
 } from '@opentelemetry/sdk-metrics';
 import { Resource } from '@opentelemetry/resources';
 import { ExportResult, ExportResultCode } from '@opentelemetry/core';
-import * as Crypto from 'crypto'
+import * as Crypto from 'crypto';
 
 // Constants for CloudWatch Logs limits
-const CW_MAX_EVENT_PAYLOAD_BYTES = 256 * 1024; // 256KB
-const CW_MAX_REQUEST_EVENT_COUNT = 10000;
-const CW_PER_EVENT_HEADER_BYTES = 26;
-const BATCH_FLUSH_INTERVAL = 60 * 1000;
-const CW_MAX_REQUEST_PAYLOAD_BYTES = 1 * 1024 * 1024; // 1MB
-const CW_TRUNCATED_SUFFIX = '[Truncated...]';
-const CW_EVENT_TIMESTAMP_LIMIT_PAST = 14 * 24 * 60 * 60 * 1000; // 14 days in milliseconds
-const CW_EVENT_TIMESTAMP_LIMIT_FUTURE = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
+export const CW_MAX_EVENT_PAYLOAD_BYTES = 256 * 1024; // 256KB
+export const CW_MAX_REQUEST_EVENT_COUNT = 10000;
+export const CW_PER_EVENT_HEADER_BYTES = 26;
+export const BATCH_FLUSH_INTERVAL = 60 * 1000;
+export const CW_MAX_REQUEST_PAYLOAD_BYTES = 1 * 1024 * 1024; // 1MB
+export const CW_TRUNCATED_SUFFIX = '[Truncated...]';
+export const CW_EVENT_TIMESTAMP_LIMIT_PAST = 14 * 24 * 60 * 60 * 1000; // 14 days in milliseconds
+export const CW_EVENT_TIMESTAMP_LIMIT_FUTURE = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
 
-const RECORD_DATA_TYPES = {
+export const RECORD_DATA_TYPES = {
   SUM_DATA: 'SUM_DATA',
   HISTOGRAM_DATA: 'HISTOGRAM_DATA',
   EXP_HISTOGRAM_DATA: 'EXP_HISTOGRAM_DATA',
-}
+};
 
-interface Record {
+export interface Record {
+  name?: string;
   //[]MetricRecord
   timestamp: number;
   attributes: Attributes;
@@ -62,17 +55,17 @@ interface Record {
 }
 
 interface RecordData {
-  type: string,
-  value: RecordValue | number
+  type: string;
+  value: RecordValue | number;
 }
 
-interface RecordValue {
-  Values?: number[],
-  Counts?: number[],
-  Count: number,
-  Sum: number,
-  Max: number,
-  Min: number,
+export interface RecordValue {
+  Values?: number[];
+  Counts?: number[];
+  Count: number;
+  Sum: number;
+  Max: number;
+  Min: number;
 }
 
 interface Instrument {
@@ -81,7 +74,7 @@ interface Instrument {
   description: string;
 }
 
-export interface EMFLogInterface {
+export interface EMFLog {
   'EC2.AutoScalingGroup'?: string;
   'Telemetry.Extended'?: string;
   Service?: string;
@@ -101,7 +94,7 @@ export interface EMFLogInterface {
   PlatformType?: string;
   [key: `resource.${string}`]: string;
   [metricName: string]: string | EmfLogError | Fault | undefined | Aws | RecordValue | number;
-  Version: string
+  Version: string;
 }
 
 export interface EmfLogError {
@@ -171,37 +164,36 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
   private namespace: string;
   private logGroupName: string | undefined;
   private logStreamName: string;
-//[]   private metricDeclarations: {}[];
-//[]   private parseJsonEncodedAttrValues: boolean;
   private aggregationTemporality: AggregationTemporality;
 
-  private logsClient: CloudWatchLogsClient;
+  private logsClient: CloudWatchLogs;
   private logGroupExists: boolean;
   private logGroupExistsPromise: Promise<boolean>;
   // Event batch to store logs before sending to CloudWatch
   private eventBatch: undefined | EventBatch = undefined;
 
   // OTel to CloudWatch unit mapping
-  //[]fix interface
-  private UNIT_MAPPING: { [key: string]: string } = {
-    ms: 'Milliseconds',
-    s: 'Seconds',
-    us: 'Microseconds',
-    ns: 'Nanoseconds',
-    By: 'Bytes',
-    KiBy: 'Kilobytes',
-    MiBy: 'Megabytes',
-    GiBy: 'Gigabytes',
-    TiBy: 'Terabytes',
-    Bi: 'Bits',
-    KiBi: 'Kilobits',
-    MiBi: 'Megabits',
-    GiBi: 'Gigabits',
-    TiBi: 'Terabits',
-    '%': 'Percent',
-    '1': 'Count',
-    '{count}': 'Count',
-  };
+  private UNIT_MAPPING: Map<string, string> = new Map<string, string>(
+    Object.entries({
+      ms: 'Milliseconds',
+      s: 'Seconds',
+      us: 'Microseconds',
+      ns: 'Nanoseconds',
+      By: 'Bytes',
+      KiBy: 'Kilobytes',
+      MiBy: 'Megabytes',
+      GiBy: 'Gigabytes',
+      TiBy: 'Terabytes',
+      Bi: 'Bits',
+      KiBi: 'Kilobits',
+      MiBi: 'Megabits',
+      GiBi: 'Gigabits',
+      TiBi: 'Terabits',
+      '%': 'Percent',
+      '1': 'Count',
+      '{count}': 'Count',
+    })
+  );
 
   /**
    * Initialize the CloudWatch EMF exporter.
@@ -210,22 +202,18 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
    * @param logGroupName CloudWatch log group name
    * @param logStreamName CloudWatch log stream name (auto-generated if None)
    * @param awsRegion AWS region (auto-detected if None)
-   * @param metricDeclarations Optional metric declarations for filtering
-   * @param parseJsonEncodedAttrValues Whether to parse JSON-encoded attribute values
-   * @param preferredTemporality Optional dictionary mapping instrument types to aggregation temporality
-   * @param AggregationTemporality Additional arguments passed to boto3 client
+   * @param AggregationTemporality Optional AggregationTemporality to indicate the way additive quantities are expressed
+   * @param cloudwatchLogsConfig Additional arguments passed to boto3 client
    */
   constructor(
     namespace: string = 'default',
     logGroupName: string | undefined,
     logStreamName: string | undefined,
     awsRegion: string | undefined,
-    metricDeclarations: {}[] | undefined,
-    parseJsonEncodedAttrValues: boolean = true,
     //[] preferred_temporality: Record<type, AggregationTemporality> | undefined,
-    aggregationTemporality: AggregationTemporality,
+    aggregationTemporality: AggregationTemporality = AggregationTemporality.DELTA,
     //[] **kwargs
-    cloudwatchLogsConfig: CloudWatchLogsClientConfig
+    cloudwatchLogsConfig: CloudWatchLogsClientConfig = {}
   ) {
     //[]super().__init__(preferred_temporality)
 
@@ -239,7 +227,7 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     // Initialize CloudWatch Logs client
     //[] session = boto3.Session(region_name=aws_region)
     // this.logs_client = session.client("logs", **kwargs)
-    this.logsClient = new CloudWatchLogsClient(cloudwatchLogsConfig);
+    this.logsClient = new CloudWatchLogs(cloudwatchLogsConfig); //[] aws region?
 
     // Ensure log group exists
     this.logGroupExists = false;
@@ -252,7 +240,7 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
 
     // unique_id = str(uuid.uuid4())[:8]
     const uniqueId = Crypto.randomUUID().substring(0, 8);
-    return `otel-js-${uniqueId}`;
+    return `otel-javascript-${uniqueId}`;
   }
 
   private async ensureLogGroupExists() {
@@ -262,22 +250,18 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
 
     /* Ensure the log group exists, create if it doesn't. */
     //[] try {
-      //[][][][] Should this be non blocking???????
-      let res = await this.logsClient.send(
-        new DescribeLogGroupsCommand({
-          logGroupNamePrefix: this.logGroupName,
-          limit: 1,
-        })
-      );
+    //[][][][] Should this be non blocking???????
+    const res = await this.logsClient.describeLogGroups({
+      logGroupNamePrefix: this.logGroupName,
+      limit: 1,
+    });
     // } catch (e) {
 
-      if (!res.logGroups || res.logGroups.length === 0) {
+    if (!res.logGroups || res.logGroups.length === 0) {
       try {
-        await this.logsClient.send(
-          new CreateLogGroupCommand({
-            logGroupName: this.logGroupName,
-          })
-        );
+        await this.logsClient.createLogGroup({
+          logGroupName: this.logGroupName,
+        });
         diag.info(`Created log group: ${this.logGroupName}`);
       } catch (e) {
         diag.error(`Failed to create log group ${this.logGroupName}: ${e}`);
@@ -293,12 +277,12 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
 
   private getMetricName(record: Record): string {
     /* Get the metric name from the metric record or data point. */
-    // For metrics in MetricsData format
-    //[][] if ('name' in record) {
-    //[][]     return record.name
-    //[][] // For compatibility with older record format
-    //[][] } else if ('instrument' in record && 'name' in record.instrument) {
-    if (record.instrument?.name) {
+    if (record.name) {
+      //[][] Confirm if this is still needed
+      // For metrics in MetricsData format
+      return record.name;
+    } else if (record.instrument?.name) {
+      // For compatibility with older record format
       return record.instrument.name;
     } else {
       // Fallback with generic name
@@ -319,7 +303,7 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     if (!unit) {
       return undefined;
     }
-    return this.UNIT_MAPPING[unit] ?? unit;
+    return this.UNIT_MAPPING.get(unit) ?? unit;
   }
 
   private getDimensionNames(attributes: Attributes): string[] {
@@ -357,7 +341,7 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
         */
     // Convert from nanoseconds to milliseconds
     const secondsToMillis = hrTime[0] * 1000;
-    const nanosToMillis = parseInt(`${hrTime[1] / 1000}`);
+    const nanosToMillis = Math.floor(hrTime[1] / 1_000_000); // Converting a double to an int in Javascript without rounding
     return secondsToMillis + nanosToMillis;
   }
 
@@ -431,10 +415,11 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
       timestamp: timestampMs, // Set timestamp
       attributes: dp.attributes, // Set attributes
 
-      sumData: {  // For Sum, set the sumData
+      sumData: {
+        // For Sum, set the sumData
         value: dp.value,
-        type: RECORD_DATA_TYPES.SUM_DATA
-      }
+        type: RECORD_DATA_TYPES.SUM_DATA,
+      },
     };
 
     return [record, timestampMs];
@@ -469,8 +454,8 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
           Min: dp.value.min ?? 0,
           Max: dp.value.max ?? 0,
         },
-        type: RECORD_DATA_TYPES.HISTOGRAM_DATA
-      }
+        type: RECORD_DATA_TYPES.HISTOGRAM_DATA,
+      },
     };
 
     return [record, timestampMs];
@@ -590,8 +575,8 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
           Max: dp.value.max ?? 0,
           Min: dp.value.min ?? 0,
         },
-        type: RECORD_DATA_TYPES.HISTOGRAM_DATA
-      }
+        type: RECORD_DATA_TYPES.HISTOGRAM_DATA,
+      },
     };
 
     return [record, timestampMs];
@@ -620,12 +605,12 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
         creates a single EMF log for all records.
         */
     // Start with base structure
-    const emfLog: EMFLogInterface = {
+    const emfLog: EMFLog = {
       _aws: {
-        Timestamp: timestamp || parseInt(`${Date.now()}`),
+        Timestamp: timestamp || Date.now(),
         CloudWatchMetrics: [],
       },
-      Version: '1'
+      Version: '1',
     };
 
     // Add resource attributes to EMF log but not as dimensions
@@ -653,10 +638,10 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
       // Process different types of aggregations
       if (record.expHistogramData) {
         // Base2 Exponential Histogram - Store value directly in emf_log
-        emfLog[metricName] = record.expHistogramData.value
+        emfLog[metricName] = record.expHistogramData.value;
       } else if (record.histogramData) {
         // Regular Histogram metrics - Store value directly in emf_log
-        emfLog[metricName] = record.histogramData.value
+        emfLog[metricName] = record.histogramData.value;
       } else if (record.sumData) {
         // Counter/UpDownCounter - Store value directly in emf_log
         emfLog[metricName] = record.sumData.value;
@@ -795,11 +780,11 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
                                             Timestamp: ${timestampMs}, Attributes: ${attrsKey.substring(0, 100)}...`);
 
               // Create EMF log for this batch of metrics with the group's timestamp
-              const emfLogDict = this.createEmfLog(metricRecords, resource, Number(timestampMs));
+              const emfLog = this.createEmfLog(metricRecords, resource, Number(timestampMs));
 
               // Convert to JSON
               const logEvent = {
-                message: JSON.stringify(emfLogDict),
+                message: JSON.stringify(emfLog),
                 timestamp: timestampMs,
               };
 
@@ -850,7 +835,7 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     }
 
     // Check timestamp constraints
-    const currentTime = parseInt(`${Date.now()}`); // Current time in milliseconds
+    const currentTime = Date.now(); // Current time in milliseconds
     const eventTime = timestamp;
 
     // Calculate the time difference
@@ -880,7 +865,7 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
       byteTotal: 0,
       minTimestampMs: 0,
       maxTimestampMs: 0,
-      createdTimestampMs: parseInt(`${Date.now()}`),
+      createdTimestampMs: Date.now(),
     };
   }
 
@@ -895,7 +880,9 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
         Returns:
             bool: true if adding the next event would exceed limits
         */
+    //[][] console.log(`${batch.logEvents.length}    ${batch.byteTotal}`)
     return (
+      //[][] batch.logEvents.length >= 5 || //[]
       batch.logEvents.length >= CW_MAX_REQUEST_EVENT_COUNT ||
       batch.byteTotal + nextEventSize > CW_MAX_REQUEST_PAYLOAD_BYTES
     );
@@ -927,7 +914,8 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     }
 
     // flush the event batch when reached 60s interval
-    const currentTime = parseInt(`${Date.now()}`);
+    const currentTime = Date.now();
+    console.log(`Diff interval ${currentTime - batch.createdTimestampMs} >= ${BATCH_FLUSH_INTERVAL}`);
     if (currentTime - batch.createdTimestampMs >= BATCH_FLUSH_INTERVAL) {
       return false;
     }
@@ -975,7 +963,7 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
         Args:
             batch: The event batch
         */
-    if (!batch['logEvents']) {
+    if (!batch['logEvents'] || batch['logEvents'].length === 0) {
       return;
     }
 
@@ -999,13 +987,13 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
 
     try {
       // Create log group and stream if they don't exist
-      try {
-        await this.logsClient.send(
-          new CreateLogGroupCommand({
-            logGroupName: this.logGroupName,
-          })
-        );
 
+      //[]don't need this try catch
+      try {
+        await this.logsClient.createLogGroup({
+          logGroupName: this.logGroupName,
+        });
+        // need to only print this debug statement depending on result of createLogGroupCommand
         diag.debug(`Created log group: ${this.logGroupName}`);
       } catch (e) {
         diag.debug(`Error when creating log group "${this.logGroupName}": ${e}`);
@@ -1013,12 +1001,10 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
 
       // Create log stream if it doesn't exist
       try {
-        await this.logsClient.send(
-          new CreateLogStreamCommand({
-            logGroupName: this.logGroupName,
-            logStreamName: this.logStreamName,
-          })
-        );
+        await this.logsClient.createLogStream({
+          logGroupName: this.logGroupName,
+          logStreamName: this.logStreamName,
+        });
 
         diag.debug(`Created log stream: ${this.logStreamName}`);
       } catch (e) {
@@ -1026,9 +1012,9 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
       }
 
       // Make the PutLogEvents call
-      const response = await this.logsClient.send(new PutLogEventsCommand(putLogEventsInput));
+      const response = await this.logsClient.putLogEvents(putLogEventsInput);
 
-      const elapsedMs = parseInt(`${Date.now() - startTime}`);
+      const elapsedMs = Date.now() - startTime;
       diag.debug(
         `Successfully sent ${batch['logEvents'].length} log events
                 (${(batch['byteTotal'] / 1024).toFixed(2)} KB) in ${elapsedMs} ms`
@@ -1103,10 +1089,9 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
       await this.sendLogBatch(currentBatch);
     }
     diag.debug('CloudWatchEMFExporter force flushes the bufferred metrics');
-    return Promise.resolve();
   }
 
-  public shutdown() {
+  public async shutdown() {
     /*
         Shutdown the exporter.
         Override to handle timeout and other keyword arguments, but do nothing.
@@ -1116,11 +1101,39 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
             **kwargs: Ignored additional keyword arguments
         */
     // Intentionally do nothing
+    await this.forceFlush();
     diag.debug('CloudWatchEMFExporter shutdown called');
     return Promise.resolve();
   }
 
   selectAggregationTemporality(instrumentType: InstrumentType): AggregationTemporality {
-      return this.aggregationTemporality;
+    return this.aggregationTemporality;
   }
+}
+
+/**
+ * Convenience function to create a CloudWatch EMF exporter with DELTA temporality.
+ *
+ * @param namespace CloudWatch namespace for metrics
+ * @param logGroupName CloudWatch log group name
+ * @param logStreamName CloudWatch log stream name (auto-generated if not provided)
+ * @param awsRegion AWS region (auto-detected if not provided)
+ * @returns {CloudWatchEMFExporter} Configured CloudWatchEMFExporter instance
+ */
+export function createEmfExporter(
+  namespace: string = 'OTelJavaScript',
+  logGroupName: string = '/aws/otel/javascript',
+  logStreamName?: string,
+  awsRegion?: string,
+  //[][] **kwargs,
+  cloudwatchLogsConfig: CloudWatchLogsClientConfig = {}
+): CloudWatchEMFExporter {
+  return new CloudWatchEMFExporter(
+    namespace,
+    logGroupName,
+    logStreamName,
+    awsRegion,
+    AggregationTemporality.DELTA, // Set up temporality preference - always use DELTA for CloudWatch
+    cloudwatchLogsConfig
+  );
 }

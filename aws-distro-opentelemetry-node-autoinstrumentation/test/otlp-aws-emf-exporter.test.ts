@@ -1,35 +1,17 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import * as api from '@opentelemetry/api-events';
-import { Attributes, SpanContext, SpanKind, ValueType } from '@opentelemetry/api';
+import { diag, ValueType } from '@opentelemetry/api';
 import { Resource } from '@opentelemetry/resources';
-import { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import expect from 'expect';
-import { LLOHandler } from '../src/llo-handler';
-import { EventLogger, EventLoggerProvider } from '@opentelemetry/sdk-events';
-import { Logger, LoggerOptions, LogRecord } from '@opentelemetry/api-logs';
-import { LoggerProvider } from '@opentelemetry/sdk-logs';
 import * as sinon from 'sinon';
-import { Mutable } from '../src/utils';
 import {
-  CloudWatchLogsClient,
-  CloudWatchLogsClientConfig,
-  DescribeLogGroupsCommand,
-  CreateLogGroupCommand,
-  CreateLogStreamCommand,
-  PutLogEventsCommand,
   PutLogEventsCommandInput,
   CloudWatchLogs,
-  CreateLogStreamCommandInput,
-  CreateLogStreamCommandOutput,
   PutLogEventsCommandOutput,
-  DescribeLogGroupsCommandOutput,
-  DescribeLogGroupsCommandInput,
   CreateLogGroupCommandInput,
   CreateLogGroupCommandOutput,
 } from '@aws-sdk/client-cloudwatch-logs';
-import * as nock from 'nock';
 import {
   CloudWatchEMFExporter,
   createEmfExporter,
@@ -57,10 +39,7 @@ import {
 import { ExportResultCode } from '@opentelemetry/core';
 import { HttpHandlerOptions } from '@smithy/protocol-http';
 
-const region = 'us-east-1';
-
 describe('TestBatchProcessing', () => {
-  let mockClient;
   let exporter: CloudWatchEMFExporter;
 
   beforeEach(() => {
@@ -78,8 +57,6 @@ describe('TestBatchProcessing', () => {
       'test-log-group',
       undefined,
       undefined,
-      undefined,
-      true,
       AggregationTemporality.DELTA,
       {}
     );
@@ -285,7 +262,7 @@ describe('TestCreateEMFExporter', () => {
   it('test_create_emf_exporter_custom_args', () => {
     /* Test creating exporter with custom arguments. */
 
-    const exporter = createEmfExporter('CustomNamespace', '/custom/log/group', undefined, 'us-west-2');
+    const exporter = createEmfExporter('CustomNamespace', '/custom/log/group', undefined, 'us-west-2', {});
 
     expect(exporter).toBeInstanceOf(CloudWatchEMFExporter);
     expect(exporter['namespace']).toEqual('CustomNamespace');
@@ -295,37 +272,22 @@ describe('TestCreateEMFExporter', () => {
   it('test_create_emf_exporter_debug_mode', () => {
     /* Test creating exporter with debug mode enabled. */
 
-    const exporter = createEmfExporter('OTelJavaScript', '/aws/otel/javascript', undefined, undefined, true);
+    const setLoggerStub = sinon.stub(diag, 'setLogger');
+
+    const exporter = createEmfExporter('OTelJavaScript', '/aws/otel/javascript', undefined, undefined, {});
 
     expect(exporter).toBeInstanceOf(CloudWatchEMFExporter);
-    //[][] mock_logging_config.assert_called_once()
+    sinon.assert.calledOnce(setLoggerStub);
   });
 });
 
 describe('TestSendLogBatch', () => {
   let exporter: CloudWatchEMFExporter;
-  let cwlogs: CloudWatchLogs;
-  let describeLogGroupsStub: sinon.SinonStub<
-    [
-      args: DescribeLogGroupsCommandInput,
-      options: HttpHandlerOptions,
-      cb: (err: any, data?: DescribeLogGroupsCommandOutput) => void
-    ],
-    void
-  >;
   let createLogGroupStub: sinon.SinonStub<
     [
       args: CreateLogGroupCommandInput,
       options: HttpHandlerOptions,
       cb: (err: any, data?: CreateLogGroupCommandOutput) => void
-    ],
-    void
-  >;
-  let createLogStreamStub: sinon.SinonStub<
-    [
-      args: CreateLogStreamCommandInput,
-      options: HttpHandlerOptions,
-      cb: (err: any, data?: CreateLogStreamCommandOutput) => void
     ],
     void
   >;
@@ -339,22 +301,14 @@ describe('TestSendLogBatch', () => {
   >;
 
   beforeEach(async () => {
-    cwlogs = new CloudWatchLogs({
-      region: region,
-      credentials: {
-        accessKeyId: 'abcde',
-        secretAccessKey: 'abcde',
-      },
-    });
-
     // Stub CloudWatchLogs to avoid AWS calls
-    describeLogGroupsStub = sinon.stub(CloudWatchLogs.prototype, 'describeLogGroups').callsFake(input => {
+    sinon.stub(CloudWatchLogs.prototype, 'describeLogGroups').callsFake(input => {
       return { logGroups: [] };
     });
     createLogGroupStub = sinon.stub(CloudWatchLogs.prototype, 'createLogGroup').callsFake(input => {
       return {};
     });
-    createLogStreamStub = sinon.stub(CloudWatchLogs.prototype, 'createLogStream').callsFake(input => {
+    sinon.stub(CloudWatchLogs.prototype, 'createLogStream').callsFake(input => {
       return {};
     });
     putLogEventsStub = sinon.stub(CloudWatchLogs.prototype, 'putLogEvents').callsFake(input => {
@@ -377,8 +331,6 @@ describe('TestSendLogBatch', () => {
       'test-log-group',
       undefined,
       undefined,
-      undefined,
-      true,
       AggregationTemporality.DELTA,
       {}
     );
@@ -494,8 +446,6 @@ describe('TestSendLogEvent', () => {
       'test-log-group',
       undefined,
       undefined,
-      undefined,
-      true,
       AggregationTemporality.DELTA,
       {}
     );
@@ -562,38 +512,6 @@ describe('TestCloudWatchEMFExporter', () => {
   //[] class TestCloudWatchEMFExporter(unittest.TestCase):
   /* Test CloudWatchEMFExporter class. */
   let exporter: CloudWatchEMFExporter;
-  let describeLogGroupsStub: sinon.SinonStub<
-    [
-      args: DescribeLogGroupsCommandInput,
-      options: HttpHandlerOptions,
-      cb: (err: any, data?: DescribeLogGroupsCommandOutput) => void
-    ],
-    void
-  >;
-  let createLogGroupStub: sinon.SinonStub<
-    [
-      args: CreateLogGroupCommandInput,
-      options: HttpHandlerOptions,
-      cb: (err: any, data?: CreateLogGroupCommandOutput) => void
-    ],
-    void
-  >;
-  let createLogStreamStub: sinon.SinonStub<
-    [
-      args: CreateLogStreamCommandInput,
-      options: HttpHandlerOptions,
-      cb: (err: any, data?: CreateLogStreamCommandOutput) => void
-    ],
-    void
-  >;
-  let putLogEventsStub: sinon.SinonStub<
-    [
-      args: PutLogEventsCommandInput,
-      options: HttpHandlerOptions,
-      cb: (err: any, data?: PutLogEventsCommandOutput) => void
-    ],
-    void
-  >;
 
   beforeEach(() => {
     // Stub CloudWatchLogs to avoid AWS calls
@@ -609,8 +527,6 @@ describe('TestCloudWatchEMFExporter', () => {
       'test-log-group',
       undefined,
       undefined,
-      undefined,
-      true,
       AggregationTemporality.DELTA,
       {}
     );
@@ -623,8 +539,9 @@ describe('TestCloudWatchEMFExporter', () => {
   it('test_initialization', () => {
     /* Test exporter initialization. */
     expect(exporter['namespace']).toEqual('TestNamespace');
+    expect(exporter['logGroupName']).not.toBeUndefined();
     expect(exporter['logStreamName']).not.toBeUndefined();
-    expect(exporter['metricDeclarations']).toEqual([]);
+    expect(exporter['aggregationTemporality']).not.toBeUndefined();
   });
 
   it('test_initialization_with_custom_params', () => {
@@ -635,8 +552,6 @@ describe('TestCloudWatchEMFExporter', () => {
       'custom-log-group',
       'custom-stream',
       'us-west-2',
-      undefined,
-      true,
       AggregationTemporality.DELTA,
       {}
     );
