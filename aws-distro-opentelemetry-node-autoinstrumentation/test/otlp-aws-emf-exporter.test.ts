@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { diag, ValueType } from '@opentelemetry/api';
+import { ValueType } from '@opentelemetry/api';
 import { Resource } from '@opentelemetry/resources';
 import expect from 'expect';
 import * as sinon from 'sinon';
