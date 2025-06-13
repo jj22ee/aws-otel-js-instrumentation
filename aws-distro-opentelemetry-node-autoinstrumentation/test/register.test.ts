@@ -28,6 +28,18 @@ describe('Register', function () {
       delete process.env.OTEL_EXPORTER_OTLP_PROTOCOL;
       delete process.env.OTEL_PROPAGATORS;
       delete process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS;
+
+      delete process.env.AWS_REGION;
+      delete process.env.AGENT_OBSERVABILITY_ENABLED;
+      delete process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+      delete process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+      delete process.env.OTEL_TRACES_EXPORTER;
+      delete process.env.OTEL_LOGS_EXPORTER;
+      delete process.env.OTEL_METRICS_EXPORTER;
+
+      delete process.env.OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT;
+      delete process.env.OTEL_TRACES_SAMPLER;
+      delete process.env.OTEL_AWS_APPLICATION_SIGNALS_ENABLED;
     });
 
     it('sets AWS Default Environment Variables', () => {
@@ -45,6 +57,69 @@ describe('Register', function () {
       expect(process.env.OTEL_EXPORTER_OTLP_PROTOCOL).toEqual('customProtocol');
       expect(process.env.OTEL_PROPAGATORS).toEqual('customPropagators');
       expect(process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS).toEqual('customDisabledInstrumentations');
+    });
+
+    it('Configures with AgentObservabilityEnabled with unset region', () => {
+      process.env.AGENT_OBSERVABILITY_ENABLED = 'true';
+
+      setAwsDefaultEnvironmentVariables();
+
+      expect(process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT).toBeUndefined();
+      expect(process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT).toBeUndefined();
+    });
+
+    it('Configures with AgentObservabilityEnabled with set region', () => {
+      process.env.AWS_REGION = 'us-west-2';
+      process.env.AGENT_OBSERVABILITY_ENABLED = 'true';
+
+      setAwsDefaultEnvironmentVariables();
+
+      expect(process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT).toEqual('https://xray.us-west-2.amazonaws.com/v1/traces');
+      expect(process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT).toEqual('https://logs.us-west-2.amazonaws.com/v1/logs');
+    });
+
+    it('Configures defaults when AgentObservabilityEnabled is true', () => {
+      process.env.AWS_REGION = 'us-east-1';
+      process.env.AGENT_OBSERVABILITY_ENABLED = 'true';
+
+      setAwsDefaultEnvironmentVariables();
+
+      expect(process.env.OTEL_TRACES_EXPORTER).toEqual('otlp');
+      expect(process.env.OTEL_LOGS_EXPORTER).toEqual('otlp');
+      expect(process.env.OTEL_METRICS_EXPORTER).toEqual('awsemf');
+      expect(process.env.OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT).toEqual('true');
+      expect(process.env.OTEL_TRACES_SAMPLER).toEqual('parentbased_always_on');
+      expect(process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS).toEqual('fs,dns,http');
+      expect(process.env.OTEL_AWS_APPLICATION_SIGNALS_ENABLED).toEqual('false');
+      expect(process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT).toEqual('https://xray.us-east-1.amazonaws.com/v1/traces');
+      expect(process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT).toEqual('https://logs.us-east-1.amazonaws.com/v1/logs');
+    });
+
+    it('Respects user configuration when AgentObservabilityEnabled is false', () => {
+      process.env.AWS_REGION = 'us-east-1';
+      delete process.env.AGENT_OBSERVABILITY_ENABLED;
+      process.env.OTEL_TRACES_SAMPLER = 'traceidratio';
+
+      setAwsDefaultEnvironmentVariables();
+      expect(process.env.OTEL_TRACES_SAMPLER).toEqual('traceidratio');
+      expect(process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS).toEqual('fs,dns');
+      expect(process.env.OTEL_AWS_APPLICATION_SIGNALS_ENABLED).toBeUndefined();
+    });
+
+    it('Respects user configuration when AgentObservabilityEnabled is true', () => {
+      // Enable agent observability
+      process.env.AGENT_OBSERVABILITY_ENABLED = 'true';
+
+      // Set custom values for some environment variables
+      process.env.OTEL_TRACES_SAMPLER = 'traceidratio';
+      process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS = 'a,b,c,d';
+      process.env.OTEL_AWS_APPLICATION_SIGNALS_ENABLED = 'true';
+
+      setAwsDefaultEnvironmentVariables();
+
+      expect(process.env.OTEL_TRACES_SAMPLER).toEqual('traceidratio');
+      expect(process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS).toEqual('a,b,c,d');
+      expect(process.env.OTEL_AWS_APPLICATION_SIGNALS_ENABLED).toEqual('true');
     });
   });
 

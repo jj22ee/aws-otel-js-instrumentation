@@ -19,6 +19,7 @@ import { Instrumentation } from '@opentelemetry/instrumentation';
 import * as opentelemetry from '@opentelemetry/sdk-node';
 import { AwsOpentelemetryConfigurator } from './aws-opentelemetry-configurator';
 import { applyInstrumentationPatches, customExtractor } from './patches/instrumentation-patch';
+import { getAwsRegion, isAgentObservabilityEnabled } from './utils';
 
 diag.setLogger(new DiagConsoleLogger(), opentelemetry.core.getEnv().OTEL_LOG_LEVEL);
 
@@ -36,7 +37,7 @@ This file may also be used to apply patches to upstream instrumentation - usuall
 long-term changes to upstream.
 */
 
-export function setAwsDefaultEnvironmentVariables(): void {
+export function setAwsDefaultEnvironmentVariables() {
   if (!process.env.OTEL_EXPORTER_OTLP_PROTOCOL) {
     process.env.OTEL_EXPORTER_OTLP_PROTOCOL = 'http/protobuf';
   }
@@ -47,7 +48,55 @@ export function setAwsDefaultEnvironmentVariables(): void {
   // This auto-instrumentation for the `fs` module generates many low-value spans. `dns` is similar.
   // https://github.com/open-telemetry/opentelemetry-js-contrib/issues/1344#issuecomment-1618993178
   if (!process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS) {
-    process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS = 'fs,dns';
+    if (isAgentObservabilityEnabled()) {
+      process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS = 'fs,dns,http'; //[][][][][][][]
+    } else {
+      process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS = 'fs,dns';
+    }
+  }
+
+  if (isAgentObservabilityEnabled()) {
+    // Set exporter defaults
+    if (!process.env.OTEL_EXPORTER_OTLP_PROTOCOL) {
+      process.env.OTEL_TRACES_EXPORTER = 'otlp';
+    }
+    if (!process.env.OTEL_LOGS_EXPORTER) {
+      process.env.OTEL_LOGS_EXPORTER = 'otlp';
+    }
+    if (!process.env.OTEL_METRICS_EXPORTER) {
+      process.env.OTEL_METRICS_EXPORTER = 'awsemf';
+    }
+
+    // Set GenAI capture content default
+    if (!process.env.OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT) {
+      process.env.OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT = 'true';
+    }
+
+    // Set sampler default
+    if (!process.env.OTEL_TRACES_SAMPLER && !useXraySampler) {
+      process.env.OTEL_TRACES_SAMPLER = 'parentbased_always_on';
+    }
+
+    // Disable AWS Application Signals by default
+    if (!process.env.OTEL_AWS_APPLICATION_SIGNALS_ENABLED) {
+      process.env.OTEL_AWS_APPLICATION_SIGNALS_ENABLED = 'false';
+    }
+
+    // Set OTLP endpoints with AWS region if not already set
+    const region = getAwsRegion();
+    if (region) {
+      if (!process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT) {
+        process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = `https://xray.${region}.amazonaws.com/v1/traces`;
+      }
+
+      if (!process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT) {
+        process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = `https://logs.${region}.amazonaws.com/v1/logs`;
+      }
+    } else {
+      diag.warn(
+        'AWS region could not be determined. OTLP endpoints will not be automatically configured. Please set AWS_REGION environment variable or configure OTLP endpoints manually.'
+      );
+    }
   }
 }
 setAwsDefaultEnvironmentVariables();
