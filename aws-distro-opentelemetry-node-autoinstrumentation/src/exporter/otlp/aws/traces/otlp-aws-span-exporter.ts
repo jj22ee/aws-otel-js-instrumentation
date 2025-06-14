@@ -75,7 +75,13 @@ export class OTLPAwsSpanExporter extends OTLPProtoTraceExporter {
    * sending it to the endpoint. Otherwise, we will skip signing.
    */
   public override async export(items: ReadableSpan[], resultCallback: (result: ExportResult) => void): Promise<void> {
-    const serializedSpans: Uint8Array | undefined = ProtobufTraceSerializer.serializeRequest(items);
+    let itemsToSerialize: ReadableSpan[] = items;
+    if (isAgentObservabilityEnabled() && this.ensureLloHandler() && this.lloHandler) {
+      // items to serialize are now the lloProcessedSpans
+      itemsToSerialize = this.lloHandler.processSpans(items);
+    }
+
+    const serializedSpans: Uint8Array | undefined = ProtobufTraceSerializer.serializeRequest(itemsToSerialize);
 
     if (serializedSpans === undefined) {
       resultCallback({
@@ -95,23 +101,6 @@ export class OTLPAwsSpanExporter extends OTLPProtoTraceExporter {
       this['_delegate']._transport._transport._parameters.headers = newHeaders;
     }
 
-    try {
-      if (isAgentObservabilityEnabled() && this.ensureLloHandler() && this.lloHandler) {
-        const lloProcessedSpans = this.lloHandler.processSpans(items);
-        super.export(lloProcessedSpans, resultCallback);
-        return
-      }
-    } catch (e: unknown) {
-      const result: ExportResult = {
-        code: ExportResultCode.FAILED,
-      };
-      if (e instanceof Error) {
-        result.error = e;
-      }
-      resultCallback(result);
-      return;
-    }
-
-    super.export(items, resultCallback);
+    super.export(itemsToSerialize, resultCallback);
   }
 }
