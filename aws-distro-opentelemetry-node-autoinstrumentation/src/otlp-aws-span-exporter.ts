@@ -5,10 +5,12 @@ import { diag } from '@opentelemetry/api';
 import { OTLPExporterNodeConfigBase } from '@opentelemetry/otlp-exporter-base';
 import { ProtobufTraceSerializer } from '@opentelemetry/otlp-transformer';
 import { ReadableSpan } from '@opentelemetry/sdk-trace-base';
-import { ExportResult } from '@opentelemetry/core';
+import { ExportResult, ExportResultCode } from '@opentelemetry/core';
 import { getNodeVersion, isAgentObservabilityEnabled } from './utils';
+import { LoggerProvider as APILoggerProvider } from '@opentelemetry/api-logs';
 import { LoggerProvider } from '@opentelemetry/sdk-logs';
 import { LLOHandler } from './llo-handler';
+import { logs } from '@opentelemetry/api-logs';
 
 /**
  * This exporter extends the functionality of the OTLPProtoTraceExporter to allow spans to be exported
@@ -33,16 +35,37 @@ export class OTLPAwsSpanExporter extends OTLPProtoTraceExporter {
   private hasRequiredDependencies: boolean = false;
 
   private lloHandler: LLOHandler | undefined;
+  private loggerProvider: APILoggerProvider | undefined;
 
-  constructor(endpoint: string, config?: OTLPExporterNodeConfigBase, loggerProvider?: LoggerProvider) {
+  constructor(endpoint: string, config?: OTLPExporterNodeConfigBase, loggerProvider?: APILoggerProvider) {
     super(OTLPAwsSpanExporter.changeUrlConfig(endpoint, config));
     this.initDependencies();
     this.region = endpoint.split('.')[1];
     this.endpoint = endpoint;
 
-    if (loggerProvider) {
-      this.lloHandler = new LLOHandler(loggerProvider);
+    this.lloHandler = undefined;
+    this.loggerProvider = loggerProvider;
+  }
+
+  // Lazily initialize LLO handler when needed to avoid initialization order issues"""
+  private ensureLloHandler(): boolean {
+    if (!this.lloHandler && isAgentObservabilityEnabled()) {
+      // If logger_provider wasn't provided, try to get the current one
+      if (!this.loggerProvider) {
+        try {
+          this.loggerProvider = logs.getLoggerProvider();
+        } catch (e: unknown) {
+          return false;
+        }
+      }
+
+      if (this.loggerProvider && this.loggerProvider instanceof LoggerProvider) {
+        this.lloHandler = new LLOHandler(this.loggerProvider);
+        return true;
+      }
     }
+
+    return !!this.lloHandler;
   }
 
   /**
@@ -100,9 +123,20 @@ export class OTLPAwsSpanExporter extends OTLPProtoTraceExporter {
       }
     }
 
-    if (isAgentObservabilityEnabled() && this.lloHandler) {
-      const lloProcessedSpans = this.lloHandler.processSpans(items);
-      super.export(lloProcessedSpans, resultCallback);
+    try {
+      if (isAgentObservabilityEnabled() && this.ensureLloHandler() && this.lloHandler) {
+        const lloProcessedSpans = this.lloHandler.processSpans(items);
+        super.export(lloProcessedSpans, resultCallback);
+      }
+    } catch (e: unknown) {
+      const result: ExportResult = {
+        code: ExportResultCode.FAILED,
+      };
+      if (e instanceof Error) {
+        result.error = e;
+      }
+      resultCallback(result);
+      return;
     }
 
     super.export(items, resultCallback);

@@ -94,7 +94,7 @@ export function setAwsDefaultEnvironmentVariables() {
         process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = `https://logs.${region}.amazonaws.com/v1/logs`;
       }
     } else {
-      diag.warn(
+      diag.error(
         'AWS region could not be determined. OTLP endpoints will not be automatically configured. Please set AWS_REGION environment variable or configure OTLP endpoints manually.'
       );
     }

@@ -219,7 +219,7 @@ export class AwsOpentelemetryConfigurator {
     const DISTRO_VERSION: string = LIB_VERSION;
     autoResource.attributes[SEMRESATTRS_TELEMETRY_AUTO_VERSION] = DISTRO_VERSION + '-aws';
     diag.debug(
-      `@aws/aws-distro-opentelemetry-node-autoinstrumentation - version: ${autoResource.attributes[SEMRESATTRS_TELEMETRY_AUTO_VERSION]}`
+      `enhanced-adot-node-autoinstrumentation - version: ${autoResource.attributes[SEMRESATTRS_TELEMETRY_AUTO_VERSION]}`
     );
     return autoResource;
   }
