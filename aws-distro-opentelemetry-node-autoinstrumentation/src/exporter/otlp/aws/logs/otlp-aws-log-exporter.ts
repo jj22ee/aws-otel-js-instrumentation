@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 import { OTLPLogExporter as OTLPProtoLogExporter } from '@opentelemetry/exporter-logs-otlp-proto';
-import { CompressionAlgorithm, OTLPExporterNodeConfigBase } from '@opentelemetry/otlp-exporter-base';
+import { OTLPExporterNodeConfigBase } from '@opentelemetry/otlp-exporter-base';
 
 import { ProtobufLogsSerializer } from '@opentelemetry/otlp-transformer';
 import { ReadableLogRecord } from '@opentelemetry/sdk-logs';

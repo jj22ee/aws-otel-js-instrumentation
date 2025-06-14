@@ -9,6 +9,7 @@
 import { Attributes, diag, HrTime } from '@opentelemetry/api';
 import { CloudWatchLogsClientConfig, PutLogEventsCommandInput, CloudWatchLogs } from '@aws-sdk/client-cloudwatch-logs';
 import {
+  Aggregation,
   AggregationTemporality,
   DataPoint,
   DataPointType,
@@ -915,7 +916,7 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
 
     // flush the event batch when reached 60s interval
     const currentTime = Date.now();
-    console.log(`Diff interval ${currentTime - batch.createdTimestampMs} >= ${BATCH_FLUSH_INTERVAL}`);
+    // console.log(`Diff interval ${currentTime - batch.createdTimestampMs} >= ${BATCH_FLUSH_INTERVAL}`);
     if (currentTime - batch.createdTimestampMs >= BATCH_FLUSH_INTERVAL) {
       return false;
     }
@@ -1108,6 +1109,15 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
 
   selectAggregationTemporality(instrumentType: InstrumentType): AggregationTemporality {
     return this.aggregationTemporality;
+  }
+
+  selectAggregation(instrumentType: InstrumentType): Aggregation {
+    switch (instrumentType) {
+      case InstrumentType.HISTOGRAM: {
+        return Aggregation.ExponentialHistogram();
+      }
+    }
+    return Aggregation.Default();
   }
 }
 

@@ -6,6 +6,10 @@ import { ProtobufTraceSerializer } from '@opentelemetry/otlp-transformer';
 import { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { ExportResult, ExportResultCode } from '@opentelemetry/core';
 import { AwsAuthenticator } from '../common/aws-authenticator';
+import { LoggerProvider as APILoggerProvider, logs } from '@opentelemetry/api-logs';
+import { LLOHandler } from '../../../../llo-handler';
+import { isAgentObservabilityEnabled } from '../../../../utils';
+import { LoggerProvider } from '@opentelemetry/sdk-logs';
 
 /**
  * This exporter extends the functionality of the OTLPProtoTraceExporter to allow spans to be exported
@@ -20,7 +24,10 @@ export class OTLPAwsSpanExporter extends OTLPProtoTraceExporter {
   private region: string;
   private authenticator: AwsAuthenticator;
 
-  constructor(endpoint: string, config?: OTLPExporterNodeConfigBase) {
+  private lloHandler: LLOHandler | undefined;
+  private loggerProvider: APILoggerProvider | undefined;
+
+  constructor(endpoint: string, config?: OTLPExporterNodeConfigBase, loggerProvider?: APILoggerProvider) {
     let modifiedConfig: OTLPExporterNodeConfigBase = {
       url: endpoint,
     };
@@ -36,6 +43,30 @@ export class OTLPAwsSpanExporter extends OTLPProtoTraceExporter {
     this.region = endpoint.split('.')[1];
     this.endpoint = endpoint;
     this.authenticator = new AwsAuthenticator(this.region, 'xray');
+
+    this.lloHandler = undefined;
+    this.loggerProvider = loggerProvider;
+  }
+
+  // Lazily initialize LLO handler when needed to avoid initialization order issues"""
+  private ensureLloHandler(): boolean {
+    if (!this.lloHandler && isAgentObservabilityEnabled()) {
+      // If logger_provider wasn't provided, try to get the current one
+      if (!this.loggerProvider) {
+        try {
+          this.loggerProvider = logs.getLoggerProvider();
+        } catch (e: unknown) {
+          return false;
+        }
+      }
+
+      if (this.loggerProvider && this.loggerProvider instanceof LoggerProvider) {
+        this.lloHandler = new LLOHandler(this.loggerProvider);
+        return true;
+      }
+    }
+
+    return !!this.lloHandler;
   }
 
   /**
@@ -62,6 +93,23 @@ export class OTLPAwsSpanExporter extends OTLPProtoTraceExporter {
       // See type: https://github.com/open-telemetry/opentelemetry-js/blob/experimental/v0.57.1/experimental/packages/otlp-exporter-base/src/transport/http-transport-types.ts#L31
       const newHeaders: () => Record<string, string> = () => signedRequest;
       this['_delegate']._transport._transport._parameters.headers = newHeaders;
+    }
+
+    try {
+      if (isAgentObservabilityEnabled() && this.ensureLloHandler() && this.lloHandler) {
+        const lloProcessedSpans = this.lloHandler.processSpans(items);
+        super.export(lloProcessedSpans, resultCallback);
+        return
+      }
+    } catch (e: unknown) {
+      const result: ExportResult = {
+        code: ExportResultCode.FAILED,
+      };
+      if (e instanceof Error) {
+        result.error = e;
+      }
+      resultCallback(result);
+      return;
     }
 
     super.export(items, resultCallback);

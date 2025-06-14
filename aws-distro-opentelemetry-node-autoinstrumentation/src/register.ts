@@ -50,7 +50,7 @@ export function setAwsDefaultEnvironmentVariables() {
   // https://github.com/open-telemetry/opentelemetry-js-contrib/issues/1344#issuecomment-1618993178
   if (!process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS) {
     if (isAgentObservabilityEnabled()) {
-      process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS = 'fs,dns,http'; //[][][][][][][]
+      process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS = 'fs,dns,http,aws-sdk,net'; //[][][][][][][]
     } else {
       process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS = 'fs,dns';
     }
