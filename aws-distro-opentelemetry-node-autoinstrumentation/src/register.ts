@@ -20,7 +20,7 @@ import { Instrumentation } from '@opentelemetry/instrumentation';
 import * as opentelemetry from '@opentelemetry/sdk-node';
 import { AwsOpentelemetryConfigurator } from './aws-opentelemetry-configurator';
 import { applyInstrumentationPatches, customExtractor } from './patches/instrumentation-patch';
-import { getAwsRegion, isAgentObservabilityEnabled } from './utils';
+import { getAwsRegionFromEnvironment, isAgentObservabilityEnabled } from './utils';
 
 diag.setLogger(new DiagConsoleLogger(), opentelemetry.core.getEnv().OTEL_LOG_LEVEL);
 
@@ -45,13 +45,14 @@ export function setAwsDefaultEnvironmentVariables() {
   if (!process.env.OTEL_PROPAGATORS) {
     process.env.OTEL_PROPAGATORS = 'xray,tracecontext';
   }
-  // Disable the following instrumentations by default
-  // This auto-instrumentation for the `fs` module generates many low-value spans. `dns` is similar.
-  // https://github.com/open-telemetry/opentelemetry-js-contrib/issues/1344#issuecomment-1618993178
   if (!process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS) {
     if (isAgentObservabilityEnabled()) {
-      process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS = 'fs,dns,http,aws-sdk,net'; //[][][][][][][]
+      // Assume users only need instrumentations that are manually set-up outside of OpenTelemetry
+      process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS = 'amqplib,aws-lambda,aws-sdk,bunyan,cassandra-driver,connect,cucumber,dataloader,dns,express,fastify,fs,generic-pool,graphql,grpc,hapi,http,ioredis,kafkajs,knex,koa,lru-memoizer,memcached,mongodb,mongoose,mysql2,mysql,nestjs-core,net,pg,pino,redis,redis-4,restify,router,socket.io,tedious,undici,winston';
     } else {
+      // Disable the following instrumentations by default
+      // This auto-instrumentation for the `fs` module generates many low-value spans. `dns` is similar.
+      // https://github.com/open-telemetry/opentelemetry-js-contrib/issues/1344#issuecomment-1618993178
       process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS = 'fs,dns';
     }
   }
@@ -84,7 +85,7 @@ export function setAwsDefaultEnvironmentVariables() {
     }
 
     // Set OTLP endpoints with AWS region if not already set
-    const region = getAwsRegion();
+    const region = getAwsRegionFromEnvironment();
     if (region) {
       if (!process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT) {
         process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = `https://xray.${region}.amazonaws.com/v1/traces`;

@@ -844,6 +844,8 @@ function getSamplerProbabilityFromEnv(environment: Required<ENVIRONMENT>): numbe
   return probability;
 }
 
+// END The OpenTelemetry Authors code
+
 function getSpanExportBatchSize() {
   if (isLambdaEnvironment()) {
     return LAMBDA_SPAN_EXPORT_BATCH_SIZE;
@@ -873,46 +875,6 @@ function isAwsOtlpEndpoint(otlpEndpoint: string, service: string): boolean {
 
   return new RegExp(pattern).test(otlpEndpoint.toLowerCase());
 }
-
-//[][] duplicate
-// /**
-//  * Checks if x-aws-log-group and x-aws-log-stream are present in the headers in order to send logs to
-//  * AWS OTLP Logs endpoint.
-//  */
-// function validateLogsHeaders() {
-//   const logsHeaders = process.env['OTEL_EXPORTER_OTLP_LOGS_HEADERS'];
-
-//   if (!logsHeaders) {
-//     diag.warn(
-//       'Improper configuration: Please configure the environment variable OTEL_EXPORTER_OTLP_LOGS_HEADERS ' +
-//         'to include x-aws-log-group and x-aws-log-stream'
-//     );
-//     return false;
-//   }
-
-//   let filteredLogHeadersCount = 0;
-
-//   for (const pair of logsHeaders.split(',')) {
-//     if (pair.includes('=')) {
-//       const [key, value] = pair.split('=', 2);
-//       if ((key === AWS_OTLP_LOGS_GROUP_HEADER || key === AWS_OTLP_LOGS_STREAM_HEADER) && value) {
-//         filteredLogHeadersCount += 1;
-//       }
-//     }
-//   }
-
-//   if (filteredLogHeadersCount !== 2) {
-//     diag.warn(
-//       'Improper configuration: Please configure the environment variable OTEL_EXPORTER_OTLP_LOGS_HEADERS ' +
-//         'to have values for x-aws-log-group and x-aws-log-stream'
-//     );
-//     return false;
-//   }
-
-//   return true;
-// }
-
-// END The OpenTelemetry Authors code
 
 let checkEmfExporterEnabledResult: boolean | undefined = undefined;
 function checkEmfExporterEnabled(): boolean {
@@ -957,6 +919,10 @@ function createEmfExporter(
   return new CloudWatchEMFExporter(namespace, logGroupName, logStreamName, awsRegion, AggregationTemporality.DELTA, {});
 }
 
+/**
+ * Checks if x-aws-log-group and x-aws-log-stream are present in the headers in order to send logs to
+ * AWS OTLP Logs endpoint.
+ */
 function validateLogsHeaders(): OtlpLogHeaderSetting {
   const logHeaders = process.env.OTEL_EXPORTER_OTLP_LOGS_HEADERS;
 

@@ -51,7 +51,7 @@ export class OTLPAwsSpanExporter extends OTLPProtoTraceExporter {
   // Lazily initialize LLO handler when needed to avoid initialization order issues"""
   private ensureLloHandler(): boolean {
     if (!this.lloHandler && isAgentObservabilityEnabled()) {
-      // If logger_provider wasn't provided, try to get the current one
+      // If loggerProvider wasn't provided, try to get the current one
       if (!this.loggerProvider) {
         try {
           this.loggerProvider = logs.getLoggerProvider();

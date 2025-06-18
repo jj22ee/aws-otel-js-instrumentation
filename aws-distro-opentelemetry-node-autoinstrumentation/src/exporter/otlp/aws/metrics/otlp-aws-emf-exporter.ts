@@ -251,7 +251,6 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
 
     /* Ensure the log group exists, create if it doesn't. */
     //[] try {
-    //[][][][] Should this be non blocking???????
     const res = await this.logsClient.describeLogGroups({
       logGroupNamePrefix: this.logGroupName,
       limit: 1,
