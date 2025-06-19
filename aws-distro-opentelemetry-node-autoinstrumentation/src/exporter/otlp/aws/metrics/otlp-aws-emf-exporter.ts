@@ -5,7 +5,6 @@
  * OpenTelemetry EMF (Embedded Metric Format) Exporter for CloudWatch.
  * This exporter converts OTel metrics into CloudWatch EMF format.
  */
-
 import { Attributes, diag, HrTime } from '@opentelemetry/api';
 import { CloudWatchLogsClientConfig, PutLogEventsCommandInput, CloudWatchLogs } from '@aws-sdk/client-cloudwatch-logs';
 import {
@@ -43,89 +42,44 @@ export const RECORD_DATA_TYPES = {
   EXP_HISTOGRAM_DATA: 'EXP_HISTOGRAM_DATA',
 };
 
-export interface Record {
-  name?: string;
-  //[]MetricRecord
-  timestamp: number;
-  attributes: Attributes;
-  sumData?: RecordData;
-  histogramData?: RecordData;
-  expHistogramData?: RecordData;
-  value?: number;
-  instrument: Instrument;
-}
-
-interface RecordData {
-  type: string;
-  value: RecordValue | number;
-}
-
-export interface RecordValue {
-  Values?: number[];
-  Counts?: number[];
-  Count: number;
-  Sum: number;
-  Max: number;
-  Min: number;
-}
-
-interface Instrument {
+export interface MetricRecord {
   name: string;
   unit: string;
   description: string;
+  timestamp: number;
+  attributes: Attributes;
+
+  // Only one of the following should be defined
+  sumData?: number;
+  histogramData?: HistogramMetricRecordData;
+  expHistogramData?: ExponentialHistogramMetricRecordData;
+  value?: number;
 }
 
-export interface EMFLog {
-  'EC2.AutoScalingGroup'?: string;
-  'Telemetry.Extended'?: string;
-  Service?: string;
-  Error?: EmfLogError;
-  Host?: string;
-  Fault?: Fault;
-  Operation?: string;
-  Latency?: Latency;
-  'K8s.Namespace'?: string;
-  _aws: Aws;
-  'K8s.Node'?: string;
-  'EC2.InstanceId'?: string;
-  'Telemetry.SDK'?: string;
-  Environment?: string;
-  'K8s.WorkLoad'?: string;
-  'aws.log.group.names'?: string;
-  PlatformType?: string;
-  [key: `resource.${string}`]: string;
-  [metricName: string]: string | EmfLogError | Fault | undefined | Aws | RecordValue | number;
+export interface HistogramMetricRecordData {
+  Count: number;
+  Sum: number;
+  Max: number;
+  Min: number;
+}
+
+export interface ExponentialHistogramMetricRecordData {
+  Values: number[];
+  Counts: number[];
+  Count: number;
+  Sum: number;
+  Max: number;
+  Min: number;
+}
+
+interface EMFLog {
+  _aws: _Aws;
+  [key: `otel.resource.${string}`]: string;
+  [metricName: string]: any; // Can be any, but usually will be used for Metric Record Data
   Version: string;
 }
 
-export interface EmfLogError {
-  Counts: number[];
-  Min: number;
-  Max: number;
-  Values: number[];
-  Sum: number;
-  Count: number;
-}
-
-export interface Fault {
-  Counts: number[];
-  Min: number;
-  Max: number;
-  Values: number[];
-  Sum: number;
-  Count: number;
-}
-
-export interface Latency {
-  Counts: number[];
-  Min: number;
-  Max: number;
-  Values: number[];
-  Sum: number;
-  Count: number;
-}
-
-export interface Aws {
+export interface _Aws {
   CloudWatchMetrics: CloudWatchMetric[];
   Timestamp: number;
 }
@@ -168,31 +122,51 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
   private aggregationTemporality: AggregationTemporality;
 
   private logsClient: CloudWatchLogs;
-  private logGroupExists: boolean;
-  private logGroupExistsPromise: Promise<boolean>;
+  private logStreamExists: boolean;
+  private logStreamExistsPromise: Promise<void>;
   // Event batch to store logs before sending to CloudWatch
   private eventBatch: undefined | EventBatch = undefined;
+
+  private EMF_SUPPORTED_UNITS: Set<string> = new Set<string>([
+        "Seconds",
+        "Microseconds",
+        "Milliseconds",
+        "Bytes",
+        "Kilobytes",
+        "Megabytes",
+        "Gigabytes",
+        "Terabytes",
+        "Bits",
+        "Kilobits",
+        "Megabits",
+        "Gigabits",
+        "Terabits",
+        "Percent",
+        "Count",
+        "Bytes/Second",
+        "Kilobytes/Second",
+        "Megabytes/Second",
+        "Gigabytes/Second",
+        "Terabytes/Second",
+        "Bits/Second",
+        "Kilobits/Second",
+        "Megabits/Second",
+        "Gigabits/Second",
+        "Terabits/Second",
+        "Count/Second",
+        "None",
+  ])
 
   // OTel to CloudWatch unit mapping
   private UNIT_MAPPING: Map<string, string> = new Map<string, string>(
     Object.entries({
-      ms: 'Milliseconds',
-      s: 'Seconds',
-      us: 'Microseconds',
-      ns: 'Nanoseconds',
-      By: 'Bytes',
-      KiBy: 'Kilobytes',
-      MiBy: 'Megabytes',
-      GiBy: 'Gigabytes',
-      TiBy: 'Terabytes',
-      Bi: 'Bits',
-      KiBi: 'Kilobits',
-      MiBi: 'Megabits',
-      GiBi: 'Gigabits',
-      TiBi: 'Terabits',
-      '%': 'Percent',
-      '1': 'Count',
-      '{count}': 'Count',
+        "1": "",
+        "ns": "",
+        "ms": "Milliseconds",
+        "s": "Seconds",
+        "us": "Microseconds",
+        "By": "Bytes",
+        "bit": "Bits",
     })
   );
 
@@ -202,60 +176,47 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
    * @param namespace CloudWatch namespace for metrics
    * @param logGroupName CloudWatch log group name
    * @param logStreamName CloudWatch log stream name (auto-generated if None)
-   * @param awsRegion AWS region (auto-detected if None)
    * @param AggregationTemporality Optional AggregationTemporality to indicate the way additive quantities are expressed
-   * @param cloudwatchLogsConfig Additional arguments passed to boto3 client
+   * @param cloudwatchLogsConfig CloudWatch Logs Client Configuration. Configure region here if needed explicitly.
    */
   constructor(
     namespace: string = 'default',
     logGroupName: string | undefined,
     logStreamName: string | undefined,
-    awsRegion: string | undefined,
-    //[] preferred_temporality: Record<type, AggregationTemporality> | undefined,
     aggregationTemporality: AggregationTemporality = AggregationTemporality.DELTA,
-    //[] **kwargs
     cloudwatchLogsConfig: CloudWatchLogsClientConfig = {}
   ) {
-    //[]super().__init__(preferred_temporality)
-
     this.namespace = namespace;
     this.logGroupName = logGroupName;
     this.logStreamName = logStreamName || this.generateLogStreamName();
-    //[] this.metricDeclarations = metricDeclarations || [];
-    // this.parseJsonEncodedAttrValues = parseJsonEncodedAttrValues;
     this.aggregationTemporality = aggregationTemporality;
 
-    // Initialize CloudWatch Logs client
-    //[] session = boto3.Session(region_name=aws_region)
-    // this.logs_client = session.client("logs", **kwargs)
     this.logsClient = new CloudWatchLogs(cloudwatchLogsConfig); //[] aws region?
 
-    // Ensure log group exists
-    this.logGroupExists = false;
-    this.logGroupExistsPromise = this.ensureLogGroupExists();
+    // Determine that Log group/stream exists asynchronously. The Constructor cannot wait on async
+    // operations, so whether or not the group/stream actually exists will be determined later.
+    this.logStreamExists = false;
+    this.logStreamExistsPromise = this.ensureLogGroupExists().then(async () => {
+      await this.ensureLogStreamExists();
+    })
   }
 
+  /**
+   * Generate a unique log stream name.
+   * 
+   * @returns {string}
+   */
   private generateLogStreamName(): string {
-    /* Generate a unique log stream name. */
-    // import uuid
-
-    // unique_id = str(uuid.uuid4())[:8]
     const uniqueId = Crypto.randomUUID().substring(0, 8);
     return `otel-javascript-${uniqueId}`;
   }
 
   private async ensureLogGroupExists() {
-    if (this.logGroupExists) {
-      return true;
-    }
-
     /* Ensure the log group exists, create if it doesn't. */
-    //[] try {
     const res = await this.logsClient.describeLogGroups({
       logGroupNamePrefix: this.logGroupName,
       limit: 1,
     });
-    // } catch (e) {
 
     if (!res.logGroups || res.logGroups.length === 0) {
       try {
@@ -265,237 +226,198 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
         diag.info(`Created log group: ${this.logGroupName}`);
       } catch (e) {
         diag.error(`Failed to create log group ${this.logGroupName}: ${e}`);
-        this.logGroupExists = false;
         throw e;
       }
+    } else {
+      diag.info(`Log group ${this.logGroupName} exists`);
     }
-    // }
-
-    this.logGroupExists = true;
-    return true;
   }
 
-  private getMetricName(record: Record): string {
+  private async ensureLogStreamExists() {
+    /* Ensure the log stream exists, create if it doesn't. */
+    try {
+        await this.logsClient.createLogStream({
+          logGroupName: this.logGroupName,
+          logStreamName: this.logStreamName,
+        });
+
+        diag.debug(`Created log stream: ${this.logStreamName}`);
+        this.logStreamExists = true;
+        return true;
+    } catch (e) {
+        diag.debug(`Error when creating log stream "${this.logStreamName}": ${e}`);
+        throw e
+    }
+  }
+
+  private getMetricName(record: MetricRecord): string | undefined {
     /* Get the metric name from the metric record or data point. */
     if (record.name) {
-      //[][] Confirm if this is still needed
-      // For metrics in MetricsData format
       return record.name;
-    } else if (record.instrument?.name) {
-      // For compatibility with older record format
-      return record.instrument.name;
-    } else {
-      // Fallback with generic name
-      return 'unknown_metric';
     }
+    
+    return undefined
   }
 
-  //[][] instrument_or_metric not a good name because is only of type Instrument?
-  private getUnit(instrumentOrMetric: Instrument): string | undefined {
-    /* Get CloudWatch unit from OTel instrument or metric unit. */
-    // Check if we have an Instrument object or a metric with unit attribute
-    //[] let unit;
-    //[][][Do I really need this?] if (instrument_or_metric instanceof Instrument){
-    const unit = instrumentOrMetric.unit;
-    //[][] }else{
-    //[][]     unit = instrument_or_metric['unit'] ?? undefined
-    //[][] }
-    if (!unit) {
-      return undefined;
+  /**
+   * Get CloudWatch unit from unit in MetricRecord
+   * 
+   * @param record Metric Record
+   * @returns {string | undefined}
+   */
+  private getUnit(record: MetricRecord): string | undefined {
+    let unit = record.unit;
+
+    if (this.EMF_SUPPORTED_UNITS.has(unit)) {
+      return unit;
     }
-    return this.UNIT_MAPPING.get(unit) ?? unit;
+
+    return this.UNIT_MAPPING.get(unit) 
   }
 
+  /**
+   * Extract dimension names from attributes.
+   * For now, use all attributes as dimensions for the dimension selection logic.
+   * 
+   * @param attributes OpenTelemetry Attributes to extract Dimension Names from
+   * @returns 
+   */
   private getDimensionNames(attributes: Attributes): string[] {
-    /* Extract dimension names from attributes. */
-    // Implement dimension selection logic
-    // For now, use all attributes as dimensions
     return Object.keys(attributes);
   }
 
+  /**
+   * Create a hashable key from attributes for grouping metrics.
+   * 
+   * @param attributes OpenTelemetry Attributes used to create an attributes key
+   * @returns {string}
+   */
   private getAttributesKey(attributes: Attributes): string {
-    /*
-        Create a hashable key from attributes for grouping metrics.
-        
-        Args:
-            attributes: The attributes dictionary
-            
-        Returns:
-            A string representation of sorted attributes key-value pairs
-        */
     // Sort the attributes to ensure consistent keys
     const sortedAttrs = Object.entries(attributes).sort();
     // Create a string representation of the attributes
     return sortedAttrs.toString();
   }
 
+  /**
+   * Normalize an OpenTelemetry timestamp to milliseconds for CloudWatch.
+   * 
+   * @param hrTime Datapoint timestamp
+   * @returns {number} Timestamp in milliseconds
+   */
   private normalizeTimestamp(hrTime: HrTime): number {
-    /*
-        Normalize a nanosecond timestamp to milliseconds for CloudWatch.
-        
-        Args:
-            timestamp_ns: Timestamp in nanoseconds
-            
-        Returns:
-            Timestamp in milliseconds
-        */
-    // Convert from nanoseconds to milliseconds
+    // Convert from second and nanoseconds to milliseconds
     const secondsToMillis = hrTime[0] * 1000;
-    const nanosToMillis = Math.floor(hrTime[1] / 1_000_000); // Converting a double to an int in Javascript without rounding
+    const nanosToMillis = Math.floor(hrTime[1] / 1_000_000);
     return secondsToMillis + nanosToMillis;
   }
 
-  private createMetricRecord(metricName: string, metricUnit: string, metricDescription: string) {
-    /*Create a base metric record with instrument information.
-        
-        Args:
-            metric_name: Name of the metric
-            metric_unit: Unit of the metric
-            metric_description: Description of the metric
-            
-        Returns:
-            A base metric record object
-        */
-    //[][] let record = type('MetricRecord', (), {})()
-    // record.instrument = type('Instrument', (), {})()
-    // record.instrument.name = metric_name
-    // record.instrument.unit = metric_unit
-    // record.instrument.description = metric_description
-
-    const record = {
-      instrument: {
-        name: metricName,
-        unit: metricUnit,
-        description: metricDescription,
-      },
+  /**
+   * Create a base metric record with instrument information.
+   * 
+   * @param metricName Name of the metric
+   * @param metricUnit Unit of the metric
+   * @param metricDescription Description of the metric
+   * @param timestamp Normalized end epoch timestamp when metric data was collected
+   * @param attributes Attributes of the metric data
+   * @returns {MetricRecord}
+   */
+  private createMetricRecord(metricName: string, metricUnit: string, metricDescription: string, timestamp: number, attributes: Attributes): MetricRecord {
+    const record: MetricRecord = {
+      name: metricName,
+      unit: metricUnit,
+      description: metricDescription,
+      timestamp,
+      attributes
     };
 
     return record;
   }
 
-  private convertGauge(metric: GaugeMetricData, dp: DataPoint<number>): [Record, number] {
-    /*Convert a Gauge metric datapoint to a metric record.
-        
-        Args:
-            metric: The metric object
-            dp: The datapoint to convert
-            
-        Returns:
-            Tuple of (metric record, timestamp in ms)
-        */
-
-    //[] dp.endTime? seems like the only one... same goes for all other use of normalizeTimestamp //[] let timestamp_ms = this.normalize_timestamp(dp.time_unix_nano) if 'time_unix_nano' in dp else int(time.time() * 1000)
-    const timestampMs = this.normalizeTimestamp(dp.endTime);
+  /**
+   * Convert a Gauge metric datapoint to a metric record.
+   * 
+   * @param metric Gauge Metric Data
+   * @param dataPoint The datapoint to convert
+   * @returns {[MetricRecord, number]}
+   */
+  private convertGauge(metric: GaugeMetricData, dataPoint: DataPoint<number>): MetricRecord {
+    const timestampMs = this.normalizeTimestamp(dataPoint.endTime);
     // Create base record
-    const record: Record = {
-      ...this.createMetricRecord(metric.descriptor.name, metric.descriptor.unit, metric.descriptor.description),
-      timestamp: timestampMs, // Set timestamp
-      attributes: dp.attributes, // Set attributes
-      value: dp.value, // For Gauge, set the value directly
-    };
+    const metricRecord: MetricRecord = this.createMetricRecord(metric.descriptor.name, metric.descriptor.unit, metric.descriptor.description, timestampMs, dataPoint.attributes)
+    metricRecord.value = dataPoint.value; // For Gauge, set the value directly
 
-    return [record, timestampMs];
+    return metricRecord;
   }
 
-  private convertSum(metric: SumMetricData, dp: DataPoint<number>): [Record, number] {
-    /*Convert a Sum metric datapoint to a metric record.
-        
-        Args:
-            metric: The metric object
-            dp: The datapoint to convert
-            
-        Returns:
-            Tuple of (metric record, timestamp in ms)
-        */
-
-    const timestampMs = this.normalizeTimestamp(dp.endTime);
+  /**
+   * Convert a Sum metric datapoint to a metric record.
+   * 
+   * @param metric The metric object
+   * @param dataPoint The datapoint to convert
+   * @returns {[MetricRecord, number]}
+   */
+  private convertSum(metric: SumMetricData, dataPoint: DataPoint<number>): MetricRecord {
+    const timestampMs = this.normalizeTimestamp(dataPoint.endTime);
     // Create base record
-    const record: Record = {
-      ...this.createMetricRecord(metric.descriptor.name, metric.descriptor.unit, metric.descriptor.description),
-      timestamp: timestampMs, // Set timestamp
-      attributes: dp.attributes, // Set attributes
+    const record: MetricRecord = this.createMetricRecord(metric.descriptor.name, metric.descriptor.unit, metric.descriptor.description, timestampMs, dataPoint.attributes)
+    record.sumData = dataPoint.value
 
-      sumData: {
-        // For Sum, set the sumData
-        value: dp.value,
-        type: RECORD_DATA_TYPES.SUM_DATA,
-      },
-    };
-
-    return [record, timestampMs];
+    return record;
   }
 
-  private convertHistogram(metric: HistogramMetricData, dp: DataPoint<Histogram>): [Record, number] {
-    /*Convert a Histogram metric datapoint to a metric record.
-
-        https://github.com/mircohacker/opentelemetry-collector-contrib/blob/main/exporter/awsemfexporter/datapoint.go#L148
-        
-        Args:
-            metric: The metric object
-            dp: The datapoint to convert
-            
-        Returns:
-            Tuple of (metric record, timestamp in ms)
-        */
-
-    const timestampMs = this.normalizeTimestamp(dp.endTime);
+  /**
+   * Convert a Histogram metric datapoint to a metric record.
+   * 
+   * @param metric The metric object
+   * @param dataPoint The datapoint to convert
+   * @returns {[MetricRecord, number]}
+   */
+  private convertHistogram(metric: HistogramMetricData, dataPoint: DataPoint<Histogram>): MetricRecord {
+    const timestampMs = this.normalizeTimestamp(dataPoint.endTime);
 
     // Create base record
-    const record: Record = {
-      ...this.createMetricRecord(metric.descriptor.name, metric.descriptor.unit, metric.descriptor.description),
-      timestamp: timestampMs, // Set timestamp
-      attributes: dp.attributes, // Set attributes
-
-      histogramData: {
-        value: {
+    const record: MetricRecord = this.createMetricRecord(metric.descriptor.name, metric.descriptor.unit, metric.descriptor.description, timestampMs, dataPoint.attributes)
+    record.histogramData = {
           // For Histogram, set the histogram_data
-          Count: dp.value.count,
-          Sum: dp.value.sum ?? 0,
-          Min: dp.value.min ?? 0,
-          Max: dp.value.max ?? 0,
-        },
-        type: RECORD_DATA_TYPES.HISTOGRAM_DATA,
-      },
-    };
+          Count: dataPoint.value.count,
+          Sum: dataPoint.value.sum ?? 0,
+          Min: dataPoint.value.min ?? 0,
+          Max: dataPoint.value.max ?? 0,
+      }
 
-    return [record, timestampMs];
+    return record;
   }
 
+  /**
+   * Convert an ExponentialHistogram metric datapoint to a metric record.
+   * This function follows the logic of CalculateDeltaDatapoints in the Go implementation,
+   * converting exponential buckets to their midpoint values.
+   * 
+   * @param metric The metric object
+   * @param dataPoint The datapoint to convert
+   * @returns {[MetricRecord, number]}
+   */
   private convertExpHistogram(
     metric: ExponentialHistogramMetricData,
-    dp: DataPoint<ExponentialHistogram>
-  ): [Record, number] {
-    /*
-        Convert an ExponentialHistogram metric datapoint to a metric record.
-        
-        This function follows the logic of CalculateDeltaDatapoints in the Go implementation,
-        converting exponential buckets to their midpoint values.
-        
-        Args:
-            metric: The metric object
-            dp: The datapoint to convert
-            
-        Returns:
-            Tuple of (metric record, timestamp in ms)
-        */
-
+    dataPoint: DataPoint<ExponentialHistogram>
+  ): MetricRecord {
     // Set timestamp
-    const timestampMs = this.normalizeTimestamp(dp.endTime);
+    const timestampMs = this.normalizeTimestamp(dataPoint.endTime);
 
     // Initialize arrays for values and counts
     const arrayValues = [];
     const arrayCounts = [];
 
     // Get scale
-    const scale = dp.value.scale;
+    const scale = dataPoint.value.scale;
     // Calculate base using the formula: 2^(2^(-scale))
     const base = Math.pow(2, Math.pow(2, -scale));
 
     // Process positive buckets
-    // if ('positive' in dp && 'bucketCounts' in dp.value.positive && dp.positive.bucket_counts) {
-    if (dp.value?.positive?.bucketCounts) {
-      const positiveOffset = dp.value.positive.offset ?? 0;
-      const positiveBucketCounts = dp.value.positive.bucketCounts;
+    if (dataPoint.value?.positive?.bucketCounts) {
+      const positiveOffset = dataPoint.value.positive.offset ?? 0;
+      const positiveBucketCounts = dataPoint.value.positive.bucketCounts;
 
       let bucketBegin = 0;
       let bucketEnd = 0;
@@ -523,16 +445,16 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     }
 
     // Process zero bucket
-    const zeroCount = dp.value.zeroCount ?? 0;
+    const zeroCount = dataPoint.value.zeroCount ?? 0;
     if (zeroCount > 0) {
       arrayValues.push(0);
       arrayCounts.push(zeroCount);
     }
 
     // Process negative buckets
-    if (dp.value.negative.bucketCounts) {
-      const negativeOffset = dp.value.negative.offset ?? 0;
-      const negativeBucketCounts = dp.value.negative.bucketCounts;
+    if (dataPoint.value.negative.bucketCounts) {
+      const negativeOffset = dataPoint.value.negative.offset ?? 0;
+      const negativeBucketCounts = dataPoint.value.negative.bucketCounts;
 
       let bucketBegin = 0;
       let bucketEnd = 0;
@@ -559,45 +481,36 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
       }
     }
 
-    // Create base record
-    const record: Record = {
-      ...this.createMetricRecord(metric.descriptor.name, metric.descriptor.unit, metric.descriptor.description),
-      timestamp: timestampMs,
-      attributes: dp.attributes, // Set attributes
-
-      expHistogramData: {
-        value: {
+    // Create base record 
+    const metricRecord = this.createMetricRecord(metric.descriptor.name, metric.descriptor.unit, metric.descriptor.description, timestampMs, dataPoint.attributes)
+    metricRecord.expHistogramData = {
           // Set the histogram data in the format expected by CloudWatch EMF
           Values: arrayValues,
           Counts: arrayCounts,
-          Count: dp.value.count,
-          Sum: dp.value.sum ?? 0,
-          Max: dp.value.max ?? 0,
-          Min: dp.value.min ?? 0,
-        },
-        type: RECORD_DATA_TYPES.HISTOGRAM_DATA,
-      },
-    };
+          Count: dataPoint.value.count,
+          Sum: dataPoint.value.sum ?? 0,
+          Max: dataPoint.value.max ?? 0,
+          Min: dataPoint.value.min ?? 0,
+      }
+    
 
-    return [record, timestampMs];
+    return metricRecord;
   }
 
-  private groupByAttributesAndTimestamp(record: Record, timestampMs: number): [string, number] {
-    /*Group metric record by attributes and timestamp.
-        
-        Args:
-            record: The metric record
-            timestamp_ms: The timestamp in milliseconds
-            
-        Returns:
-            A tuple key for grouping
-        */
+  /**
+   * Group metric record by attributes and timestamp.
+   * 
+   * @param record The metric record
+   * @param timestampMs The timestamp in milliseconds
+   * @returns {[string, number]} Values for the key to group metrics
+   */
+  private groupByAttributesAndTimestamp(record: MetricRecord): [string, number] {
     // Create a key for grouping based on attributes
     const attrsKey = this.getAttributesKey(record.attributes);
-    return [attrsKey, timestampMs];
+    return [attrsKey, record.timestamp];
   }
 
-  private createEmfLog(metricRecords: Record[], resource: Resource, timestamp: number | undefined = undefined) {
+  private createEmfLog(metricRecords: MetricRecord[], resource: Resource, timestamp: number | undefined = undefined) {
     /*
         Create EMF log dictionary from metric records.
         
@@ -616,40 +529,40 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     // Add resource attributes to EMF log but not as dimensions
     if (resource && resource.attributes) {
       for (const [key, value] of Object.entries(resource.attributes)) {
-        emfLog[`resource.${key}`] = value?.toString() ?? 'undefined'; // Python assumes not undefinable
+        emfLog[`otel.resource.${key}`] = value?.toString() ?? 'undefined';
       }
     }
     // Initialize collections for dimensions and metrics
-    const allAttributes: Attributes = {};
+    // Attributes of each record in the list should be the same
+    const allAttributes: Attributes = metricRecords.length > 0 ? metricRecords[0].attributes : {};
     const metricDefinitions = [];
 
     // Process each metric record
     for (const record of metricRecords) {
-      // Collect attributes from all records (they should be the same for all records in the group)
-      if ('attributes' in record && record.attributes) {
-        for (const [key, value] of Object.entries(record.attributes)) {
-          allAttributes[key] = value;
-        }
-      }
-
       const metricName = this.getMetricName(record);
-      const unit = this.getUnit(record.instrument);
+      // Skip processing if metric name is undefined
+      if (!metricName) {
+        continue;
+      }
 
       // Process different types of aggregations
       if (record.expHistogramData) {
-        // Base2 Exponential Histogram - Store value directly in emf_log
-        emfLog[metricName] = record.expHistogramData.value;
+        // Base2 Exponential Histogram - Store value directly in emfLog
+        emfLog[metricName] = record.expHistogramData;
       } else if (record.histogramData) {
-        // Regular Histogram metrics - Store value directly in emf_log
-        emfLog[metricName] = record.histogramData.value;
+        // Regular Histogram metrics - Store value directly in emfLog
+        emfLog[metricName] = record.histogramData;
       } else if (record.sumData) {
-        // Counter/UpDownCounter - Store value directly in emf_log
-        emfLog[metricName] = record.sumData.value;
+        // Counter/UpDownCounter - Store value directly in emfLog
+        emfLog[metricName] = record.sumData;
       } else {
         // Other aggregations (e.g., LastValue)
         if (record.value) {
-          // Store value directly in emf_log
+          // Store value directly in emfLog
           emfLog[metricName] = record.value;
+        } else {
+          diag.debug(`Skipping metric ${metricName} as it does not have valid metric value`)
+          continue
         }
       }
 
@@ -657,6 +570,8 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
       const metricData: Metric = {
         Name: metricName,
       };
+
+      const unit = this.getUnit(record);
       if (unit) {
         metricData['Unit'] = unit;
       }
@@ -684,14 +599,14 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
   }
 
   private pushMetricRecordIntoGroupedMetrics(
-    groupedMetrics: Map<string, Map<number, Record[]>>,
+    groupedMetrics: Map<string, Map<number, MetricRecord[]>>,
     groupAttribute: string,
     groupTimestamp: number,
-    record: Record
+    record: MetricRecord
   ) {
     let metricsGroupedByAttribute = groupedMetrics.get(groupAttribute);
     if (!metricsGroupedByAttribute) {
-      metricsGroupedByAttribute = new Map<number, Record[]>();
+      metricsGroupedByAttribute = new Map<number, MetricRecord[]>();
       groupedMetrics.set(groupAttribute, metricsGroupedByAttribute);
     }
 
@@ -731,50 +646,47 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
         // Dictionary to group metrics by attributes and timestamp
         // Key: (attributes_key, timestamp_ms)
         // Value: list of metric records
-        const groupedMetrics = new Map<string, Map<number, Record[]>>();
+        const groupedMetrics = new Map<string, Map<number, MetricRecord[]>>();
 
         // Process all metrics in this scope
         for (const metric of scopeMetrics.metrics) {
           // Convert metrics to a format compatible with create_emf_log
-          // Access data points through metric.data.data_points
-          if ('dataPoints' in metric) {
-            // Process different metric types
+          // Process metric.dataPoints for different metric types
             if (metric.dataPointType === DataPointType.GAUGE) {
-              for (const dp of metric.dataPoints) {
-                const [record, timestampMs] = this.convertGauge(metric, dp);
-                const [groupAttribute, groupTimestamp] = this.groupByAttributesAndTimestamp(record, timestampMs);
+              for (const dataPoint of metric.dataPoints) {
+                const record = this.convertGauge(metric, dataPoint);
+                const [groupAttribute, groupTimestamp] = this.groupByAttributesAndTimestamp(record);
                 this.pushMetricRecordIntoGroupedMetrics(groupedMetrics, groupAttribute, groupTimestamp, record);
               }
             } else if (metric.dataPointType === DataPointType.SUM) {
-              for (const dp of metric.dataPoints) {
-                const [record, timestampMs] = this.convertSum(metric, dp);
-                const [groupAttribute, groupTimestamp] = this.groupByAttributesAndTimestamp(record, timestampMs);
+              for (const dataPoint of metric.dataPoints) {
+                const record = this.convertSum(metric, dataPoint);
+                const [groupAttribute, groupTimestamp] = this.groupByAttributesAndTimestamp(record);
                 this.pushMetricRecordIntoGroupedMetrics(groupedMetrics, groupAttribute, groupTimestamp, record);
               }
             } else if (metric.dataPointType === DataPointType.HISTOGRAM) {
-              for (const dp of metric.dataPoints) {
-                const [record, timestampMs] = this.convertHistogram(metric, dp);
-                const [groupAttribute, groupTimestamp] = this.groupByAttributesAndTimestamp(record, timestampMs);
+              for (const dataPoint of metric.dataPoints) {
+                const record = this.convertHistogram(metric, dataPoint);
+                const [groupAttribute, groupTimestamp] = this.groupByAttributesAndTimestamp(record);
                 this.pushMetricRecordIntoGroupedMetrics(groupedMetrics, groupAttribute, groupTimestamp, record);
               }
             } else if (metric.dataPointType === DataPointType.EXPONENTIAL_HISTOGRAM) {
-              for (const dp of metric.dataPoints) {
-                const [record, timestampMs] = this.convertExpHistogram(metric, dp);
-                const [groupAttribute, groupTimestamp] = this.groupByAttributesAndTimestamp(record, timestampMs);
+              for (const dataPoint of metric.dataPoints) {
+                const record = this.convertExpHistogram(metric, dataPoint);
+                const [groupAttribute, groupTimestamp] = this.groupByAttributesAndTimestamp(record);
                 this.pushMetricRecordIntoGroupedMetrics(groupedMetrics, groupAttribute, groupTimestamp, record);
               }
             } else {
-              diag.warn('Unsupported Metric Type: %s', (metric as any).dataPointType);
-              continue; // Skip this metric but continue processing others
+              // This else block should never run, all metric types are accounted for above
+              diag.debug(`Unsupported Metric Type in metric: ${metric}`);
             }
-          }
         }
 
         const sendLogEventPromises: Promise<void>[] = [];
         // Now process each group separately to create one EMF log per group
-        groupedMetrics.forEach((metricsRecordsGroupedByAttribute: Map<number, Record[]>, attrsKey: string) => {
+        groupedMetrics.forEach((metricsRecordsGroupedByAttribute: Map<number, MetricRecord[]>, attrsKey: string) => {
           // metricRecords is grouped by attribute and timestamp
-          metricsRecordsGroupedByAttribute.forEach((metricRecords: Record[], timestampMs: number) => {
+          metricsRecordsGroupedByAttribute.forEach((metricRecords: MetricRecord[], timestampMs: number) => {
             if (metricRecords) {
               diag.debug(`Creating EMF log for group with ${metricRecords.length} metrics.
                                             Timestamp: ${timestampMs}, Attributes: ${attrsKey.substring(0, 100)}...`);
@@ -793,7 +705,6 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
             }
           });
         });
-        //[][] must we await all "sendLogEvents"?
         await Promise.all(sendLogEventPromises);
       }
 
@@ -806,17 +717,14 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     }
   }
 
+  /**
+   * Validate the log event according to CloudWatch Logs constraints.
+   * Implements the same validation logic as the Go version.
+   * 
+   * @param logEvent The log event to validate
+   * @returns {boolean}
+   */
   private validateLogEvent(logEvent: LogEvent): boolean {
-    /*
-        Validate the log event according to CloudWatch Logs constraints.
-        Implements the same validation logic as the Go version.
-        
-        Args:
-            log_event: The log event to validate
-            
-        Returns:
-            bool: true if valid, false otherwise
-        */
     const message = logEvent.message;
     const timestamp = logEvent.timestamp;
 
@@ -853,13 +761,12 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     return true;
   }
 
+  /**
+   * Create a new log event batch
+   * 
+   * @returns {EventBatch}
+   */
   private createEventBatch(): EventBatch {
-    /*
-        Create a new log event batch.
-        
-        Returns:
-            Dict: A new event batch
-        */
     return {
       logEvents: [],
       byteTotal: 0,
@@ -869,36 +776,28 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     };
   }
 
+  /**
+   * Check if adding the next event would exceed CloudWatch Logs limits.
+   * 
+   * @param batch The current batch
+   * @param nextEventSize Size of the next event in bytes CW_MAX_REQUEST_EVENT_COUNT
+   * @returns {boolean} true if adding the next event would exceed limits
+   */
   private eventBatchExceedsLimit(batch: EventBatch, nextEventSize: number): boolean {
-    /*
-        Check if adding the next event would exceed CloudWatch Logs limits.
-        
-        Args:
-            batch: The current batch
-            nextEventSize: Size of the next event in bytes CW_MAX_REQUEST_EVENT_COUNT
-            
-        Returns:
-            bool: true if adding the next event would exceed limits
-        */
-    //[][] console.log(`${batch.logEvents.length}    ${batch.byteTotal}`)
     return (
-      //[][] batch.logEvents.length >= 5 || //[]
       batch.logEvents.length >= CW_MAX_REQUEST_EVENT_COUNT ||
       batch.byteTotal + nextEventSize > CW_MAX_REQUEST_PAYLOAD_BYTES
     );
   }
 
+  /**
+   * Check if the event batch spans more than 24 hours.
+   * 
+   * @param batch The event batch
+   * @param targetTimestampMs The timestamp of the event to add
+   * @returns {boolean} true if the batch is active and can accept the event
+   */
   private isBatchActive(batch: EventBatch, targetTimestampMs: number): boolean {
-    /*
-        Check if the event batch spans more than 24 hours.
-        
-        Args:
-            batch: The event batch
-            targetTimestampMs: The timestamp of the event to add
-            
-        Returns:
-            bool: true if the batch is active and can accept the event
-        */
     // New log event batch
     if (batch.minTimestampMs === 0 || batch.maxTimestampMs === 0) {
       return true;
@@ -915,7 +814,6 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
 
     // flush the event batch when reached 60s interval
     const currentTime = Date.now();
-    // console.log(`Diff interval ${currentTime - batch.createdTimestampMs} >= ${BATCH_FLUSH_INTERVAL}`);
     if (currentTime - batch.createdTimestampMs >= BATCH_FLUSH_INTERVAL) {
       return false;
     }
@@ -923,15 +821,14 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     return true;
   }
 
+  /**
+   * Append a log event to the batch.
+   * 
+   * @param batch The event batch
+   * @param logEvent The log event to append
+   * @param eventSize Size of the event in bytes
+   */
   private appendToBatch(batch: EventBatch, logEvent: LogEvent, eventSize: number) {
-    /*
-        Append a log event to the batch.
-        
-        Args:
-            batch: The event batch
-            logEvent: The log event to append
-            eventSize: Size of the event in bytes
-        */
     batch.logEvents.push(logEvent);
     batch.byteTotal += eventSize;
 
@@ -945,31 +842,24 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     }
   }
 
+  /**
+   * Sort log events in the batch by timestamp.
+   * 
+   * @param batch The event batch
+   */
   private sortLogEvents(batch: EventBatch) {
-    /*
-        Sort log events in the batch by timestamp.
-        
-        Args:
-            batch: The event batch
-        */
-    //[]batch["logEvents"] = sorted(batch["logEvents"], key=lambda x: x["timestamp"])
     batch.logEvents = batch.logEvents.sort((a, b) => a.timestamp - b.timestamp);
   }
 
+  /**
+   * Send a batch of log events to CloudWatch Logs.
+   * 
+   * @param batch The event batch
+   * @returns {Promise<void>}
+   */
   private async sendLogBatch(batch: EventBatch) {
-    /*
-        Send a batch of log events to CloudWatch Logs.
-        
-        Args:
-            batch: The event batch
-        */
     if (!batch['logEvents'] || batch['logEvents'].length === 0) {
       return;
-    }
-
-    if (!this.logGroupExists) {
-      // Must perform logGroupExists check here because promises cannot be "awaited" in constructor
-      await this.logGroupExistsPromise;
     }
 
     // Sort log events by timestamp
@@ -986,58 +876,36 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     const startTime = Date.now();
 
     try {
-      // Create log group and stream if they don't exist
-
-      //[]don't need this try catch
-      try {
-        await this.logsClient.createLogGroup({
-          logGroupName: this.logGroupName,
-        });
-        // need to only print this debug statement depending on result of createLogGroupCommand
-        diag.debug(`Created log group: ${this.logGroupName}`);
-      } catch (e) {
-        diag.debug(`Error when creating log group "${this.logGroupName}": ${e}`);
-      }
-
-      // Create log stream if it doesn't exist
-      try {
-        await this.logsClient.createLogStream({
-          logGroupName: this.logGroupName,
-          logStreamName: this.logStreamName,
-        });
-
-        diag.debug(`Created log stream: ${this.logStreamName}`);
-      } catch (e) {
-        diag.debug(`Error when creating log stream "${this.logStreamName}": ${e}`);
+      if (!this.logStreamExists) {
+        // Must perform logGroupExists check here because promises cannot be "awaited" in constructor
+        await this.logStreamExistsPromise;
       }
 
       // Make the PutLogEvents call
-      const response = await this.logsClient.putLogEvents(putLogEventsInput);
+      await this.logsClient.putLogEvents(putLogEventsInput);
 
       const elapsedMs = Date.now() - startTime;
       diag.debug(
         `Successfully sent ${batch['logEvents'].length} log events
                 (${(batch['byteTotal'] / 1024).toFixed(2)} KB) in ${elapsedMs} ms`
       );
-
-      return response;
     } catch (e) {
       diag.error(`Failed to send log events: ${e}`);
       throw e;
     }
   }
 
+  /**
+   * Send a log event to CloudWatch Logs.
+   * 
+   * This function implements the same logic as the Go version in the OTel Collector.
+   * It batches log events according to CloudWatch Logs constraints and sends them
+   * when the batch is full or spans more than 24 hours.
+   * 
+   * @param logEvent The log event to send
+   * @returns {Promise<void>}
+   */
   private async sendLogEvent(logEvent: LogEvent) {
-    /*
-        Send a log event to CloudWatch Logs.
-        
-        This function implements the same logic as the Go version in the OTel Collector.
-        It batches log events according to CloudWatch Logs constraints and sends them
-        when the batch is full or spans more than 24 hours.
-        
-        Args:
-            logEvent: The log event to send
-        */
     try {
       // Validate the log event
       if (!this.validateLogEvent(logEvent)) {
@@ -1073,16 +941,12 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     }
   }
 
+  /**
+   * Force flush any pending metrics.
+   * 
+   * @param timeoutMillis Timeout in milliseconds
+   */
   public async forceFlush(timeoutMillis: number = 10000) {
-    /*
-        Force flush any pending metrics.
-        
-        Args:
-            timeoutMillis: Timeout in milliseconds
-            
-        Returns:
-            true if successful, false otherwise
-        */
     if (this.eventBatch !== undefined && this.eventBatch['logEvents'].length > 0) {
       const currentBatch = this.eventBatch;
       this.eventBatch = this.createEventBatch();
@@ -1091,16 +955,12 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
     diag.debug('CloudWatchEMFExporter force flushes the bufferred metrics');
   }
 
+  /**
+   * Shutdown the exporter.
+   * 
+   * @returns {Promise<void>}
+   */
   public async shutdown() {
-    /*
-        Shutdown the exporter.
-        Override to handle timeout and other keyword arguments, but do nothing.
-        
-        Args:
-            timeout_millis: Ignored timeout in milliseconds
-            **kwargs: Ignored additional keyword arguments
-        */
-    // Intentionally do nothing
     await this.forceFlush();
     diag.debug('CloudWatchEMFExporter shutdown called');
     return Promise.resolve();
@@ -1126,22 +986,19 @@ export class CloudWatchEMFExporter implements PushMetricExporter {
  * @param namespace CloudWatch namespace for metrics
  * @param logGroupName CloudWatch log group name
  * @param logStreamName CloudWatch log stream name (auto-generated if not provided)
- * @param awsRegion AWS region (auto-detected if not provided)
+ * @param cloudwatchLogsConfig: CloudWatch Logs Client Configuration
  * @returns {CloudWatchEMFExporter} Configured CloudWatchEMFExporter instance
  */
 export function createEmfExporter(
   namespace: string = 'OTelJavaScript',
   logGroupName: string = '/aws/otel/javascript',
   logStreamName?: string,
-  awsRegion?: string,
-  //[][] **kwargs,
   cloudwatchLogsConfig: CloudWatchLogsClientConfig = {}
 ): CloudWatchEMFExporter {
   return new CloudWatchEMFExporter(
     namespace,
     logGroupName,
     logStreamName,
-    awsRegion,
     AggregationTemporality.DELTA, // Set up temporality preference - always use DELTA for CloudWatch
     cloudwatchLogsConfig
   );
