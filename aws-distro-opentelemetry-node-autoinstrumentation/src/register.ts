@@ -48,7 +48,8 @@ export function setAwsDefaultEnvironmentVariables() {
   if (!process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS) {
     if (isAgentObservabilityEnabled()) {
       // Assume users only need instrumentations that are manually set-up outside of OpenTelemetry
-      process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS = 'amqplib,aws-lambda,aws-sdk,bunyan,cassandra-driver,connect,cucumber,dataloader,dns,express,fastify,fs,generic-pool,graphql,grpc,hapi,http,ioredis,kafkajs,knex,koa,lru-memoizer,memcached,mongodb,mongoose,mysql2,mysql,nestjs-core,net,pg,pino,redis,redis-4,restify,router,socket.io,tedious,undici,winston';
+      process.env.OTEL_NODE_DISABLED_INSTRUMENTATIONS =
+        'amqplib,aws-lambda,aws-sdk,bunyan,cassandra-driver,connect,cucumber,dataloader,dns,express,fastify,fs,generic-pool,graphql,grpc,hapi,http,ioredis,kafkajs,knex,koa,lru-memoizer,memcached,mongodb,mongoose,mysql2,mysql,nestjs-core,net,pg,pino,redis,redis-4,restify,router,socket.io,tedious,undici,winston';
     } else {
       // Disable the following instrumentations by default
       // This auto-instrumentation for the `fs` module generates many low-value spans. `dns` is similar.

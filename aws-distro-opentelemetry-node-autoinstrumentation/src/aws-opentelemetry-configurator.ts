@@ -914,9 +914,8 @@ function createEmfExporter(
   logGroupName: string,
   logStreamName?: string,
   namespace?: string,
-  awsRegion?: string
 ): CloudWatchEMFExporter {
-  return new CloudWatchEMFExporter(namespace, logGroupName, logStreamName, awsRegion, AggregationTemporality.DELTA, {});
+  return new CloudWatchEMFExporter(namespace, logGroupName, logStreamName, AggregationTemporality.DELTA, {});
 }
 
 /**
