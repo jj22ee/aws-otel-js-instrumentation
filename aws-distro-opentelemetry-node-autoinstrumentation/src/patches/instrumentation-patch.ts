@@ -101,7 +101,30 @@ export function applyInstrumentationPatches(instrumentations: Instrumentation[])
  */
 export const customExtractor = (event: any, _handlerContext: Context): OtelContext => {
   let parent: OtelContext | undefined = undefined;
-  const lambdaTraceHeader = process.env[traceContextEnvironmentKey];
+
+  // Remove below
+  (_handlerContext as any)['traceId'] = () => {
+    return "Root=1-99990000-99992e3fe1be46a994200000;Parent=99900c3f42c00000;Sampled=1"
+  }
+  // Remove above
+
+  let lambdaTraceHeader;
+  if (_handlerContext && typeof (_handlerContext as any)['traceId'] === 'function') {
+    lambdaTraceHeader = (_handlerContext as any)['traceId']();
+    parent = awsPropagator.extract(
+      otelContext.active(),
+      { [AWSXRAY_TRACE_ID_HEADER]: lambdaTraceHeader },
+      headerGetter
+    );
+  }
+  if (parent) {
+    const spanContext = trace.getSpan(parent)?.spanContext();
+    if (spanContext && isSpanContextValid(spanContext)) {
+      return parent;
+    }
+  }
+
+  lambdaTraceHeader = process.env[traceContextEnvironmentKey];
   if (lambdaTraceHeader) {
     parent = awsPropagator.extract(
       otelContext.active(),
