@@ -21,6 +21,7 @@ import * as opentelemetry from '@opentelemetry/sdk-node';
 import { AwsOpentelemetryConfigurator } from './aws-opentelemetry-configurator';
 import { applyInstrumentationPatches, customExtractor } from './patches/instrumentation-patch';
 import { getAwsRegionFromEnvironment, isAgentObservabilityEnabled } from './utils';
+import { conditionallyApplySyntheticsConfig } from './integrations/synthetics/synthetics-helpers';
 
 diag.setLogger(new DiagConsoleLogger(), opentelemetry.core.getEnv().OTEL_LOG_LEVEL);
 
@@ -125,29 +126,7 @@ applyInstrumentationPatches(instrumentations);
 const configurator: AwsOpentelemetryConfigurator = new AwsOpentelemetryConfigurator(instrumentations, useXraySampler);
 const configuration: Partial<opentelemetry.NodeSDKConfiguration> = configurator.configure();
 
-if (process.env.AWS_OPENTELEMETRY_CONFIGURATION_OVERRIDE != null) {
-  let configurationOverride = (config: Partial<opentelemetry.NodeSDKConfiguration>) => {};
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    if (typeof __non_webpack_require__ === 'function') {
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-ignore
-      configurationOverride = __non_webpack_require__(
-        process.env.AWS_OPENTELEMETRY_CONFIGURATION_OVERRIDE
-      ).configurationOverride;
-    } else {
-      configurationOverride = require(process.env.AWS_OPENTELEMETRY_CONFIGURATION_OVERRIDE).configurationOverride;
-    }
-
-    if (typeof configurationOverride === 'function') {
-      configurationOverride(configuration);
-    }
-  } catch (e: unknown) {
-    diag.error('Error applying configuration override', e);
-  }
-}
+conditionallyApplySyntheticsConfig(configuration);
 
 const sdk: opentelemetry.NodeSDK = new opentelemetry.NodeSDK(configuration);
 

@@ -82,6 +82,7 @@ import { AwsCloudWatchOtlpBatchLogRecordProcessor } from './exporter/otlp/aws/lo
 import { ConsoleEMFExporter } from './exporter/aws/metrics/console-emf-exporter';
 import { EMFExporterBase } from './exporter/aws/metrics/emf-exporter-base';
 import { CompactConsoleLogRecordExporter } from './exporter/console/logs/compact-console-log-exporter';
+import { isAwsSynthethicsEnvironment } from './integrations/synthetics/synthetics-helpers';
 
 const AWS_TRACES_OTLP_ENDPOINT_PATTERN = '^https://xray\\.([a-z0-9-]+)\\.amazonaws\\.com/v1/traces$';
 const AWS_LOGS_OTLP_ENDPOINT_PATTERN = '^https://logs\\.([a-z0-9-]+)\\.amazonaws\\.com/v1/logs$';
@@ -320,6 +321,13 @@ export class AwsOpentelemetryConfigurator {
   }
 
   static customizeSpanProcessors(spanProcessors: SpanProcessor[], resource: Resource): void {
+    if (isAwsSynthethicsEnvironment()) {
+      // Synthetics Environment only needs a AttributePropagatingSpanProcessor from here,
+      // so return right away
+      spanProcessors.push(AttributePropagatingSpanProcessorBuilder.create().build());
+      return;
+    }
+
     if (isAgentObservabilityEnabled()) {
       // We always send 100% spans to Genesis platform for agent observability because
       // AI applications typically have low throughput traffic patterns and require
@@ -399,7 +407,7 @@ export class AwsOpentelemetryConfigurator {
   }
 
   static customizeSampler(sampler: Sampler): Sampler {
-    if (AwsOpentelemetryConfigurator.isApplicationSignalsEnabled()) {
+    if (AwsOpentelemetryConfigurator.isApplicationSignalsEnabled() || isAwsSynthethicsEnvironment()) {
       return AlwaysRecordSampler.create(sampler);
     }
     return sampler;
