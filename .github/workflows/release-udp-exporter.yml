@@ -18,7 +18,7 @@ jobs:
         uses: ./.github/actions/set_up
         with:
           node_version: "20"
-          package_name: "@aws/aws-otel-otlp-udp-exporter"
+          package_name: "@aws/aws-distro-opentelemetry-exporter-xray-udp"
           os: ubuntu-latest
           run_unit_tests: true
 
@@ -27,7 +27,7 @@ jobs:
         id: staging_tarball_build
         shell: bash
         run: |
-          cd exporters/aws-otel-otlp-udp-exporter
+          cd exporters/aws-distro-opentelemetry-exporter-xray-udp
           npm pack
 
       - name: Download and run X-Ray Daemon
@@ -42,7 +42,7 @@ jobs:
         run: |
           cd sample-applications/integ-test-http-server
           npm install
-          npm install ../../exporters/aws-otel-otlp-udp-exporter/aws-aws-otel-otlp-udp-exporter-*.tgz
+          npm install ../../exporters/aws-distro-opentelemetry-exporter-xray-udp/aws-aws-distro-opentelemetry-exporter-xray-udp-*.tgz
 
       - name: Run Sample App in Background
         run: |
@@ -76,7 +76,7 @@ jobs:
       # TODO: Uncomment when we make the first release
       # # Publish OTLP UDP Exporter to npm
       # - name: Publish to npm
-      #   working-directory: exporters/aws-otel-otlp-udp-exporter
+      #   working-directory: exporters/aws-distro-opentelemetry-exporter-xray-udp
       #   env:
       #     NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
       #     NPM_CONFIG_PROVENANCE: true
