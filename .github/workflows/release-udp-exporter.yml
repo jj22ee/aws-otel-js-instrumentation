@@ -44,6 +44,14 @@ jobs:
           cd exporters/aws-distro-opentelemetry-exporter-xray-udp
           npm pack
 
+      - name: Validate project version matches workflow input
+        run: |
+          xrayUdpSpanExporterVersion=$(node -p "require('./exporters/aws-distro-opentelemetry-exporter-xray-udp/package.json').version")
+          if [[ ! "$xrayUdpSpanExporterVersion" == "${{ inputs.udp-exporter-version }}" ]]; then
+            echo "Input version '${{ inputs.udp-exporter-version }}' does not match with the UDP Exporter project version '$xrayUdpSpanExporterVersion'"
+            exit 1
+          fi
+
       # Publish OTLP UDP Exporter to npm
       - name: Publish to npm
         working-directory: exporters/aws-distro-opentelemetry-exporter-xray-udp
