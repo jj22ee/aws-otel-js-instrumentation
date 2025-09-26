@@ -26,7 +26,6 @@ jobs:
       # Project dependencies and compilation are already done in the previous step
       - name: Install Dependencies, Compile, and Build Tarball
         id: staging_tarball_build
-        shell: bash
         run: |
           cd exporters/aws-distro-opentelemetry-exporter-xray-udp
           npm pack
@@ -46,7 +45,7 @@ jobs:
           ./xray -o -n us-east-2 -f ./daemon-logs.log --log-level debug &
 
       - name: Setup Sample App
-        working-directory: sample-apps/udp-exporter-test-app
+        working-directory: sample-applications/udp-exporter-test-app
         run: |
           npm install ../../exporters/aws-distro-opentelemetry-exporter-xray-udp/aws-aws-distro-opentelemetry-exporter-xray-udp-*.tgz
           npm install

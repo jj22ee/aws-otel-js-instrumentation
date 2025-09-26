@@ -45,12 +45,12 @@ jobs:
           npm pack
 
       # Publish OTLP UDP Exporter to npm
-      - name: Publish to npm
-        working-directory: exporters/aws-distro-opentelemetry-exporter-xray-udp
-        env:
-          NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
-          NPM_CONFIG_PROVENANCE: true
-        run: npx publish
+      # - name: Publish to npm
+      #   working-directory: exporters/aws-distro-opentelemetry-exporter-xray-udp
+      #   env:
+      #     NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
+      #     NPM_CONFIG_PROVENANCE: true
+      #   run: npx publish
 
       # Publish to GitHub releases
       - name: Create GH release
