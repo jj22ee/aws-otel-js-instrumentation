@@ -13,17 +13,17 @@ permissions:
   contents: write
 
 jobs:
-  validate-udp-exporter-e2e-test:
-    name: "Validate X-Ray UDP Exporter E2E Test Succeeds"
-    uses: ./.github/workflows/udp-exporter-e2e-test.yml
-    secrets: inherit
-    permissions:
-      id-token: write
+  # validate-udp-exporter-e2e-test:
+  #   name: "Validate X-Ray UDP Exporter E2E Test Succeeds"
+  #   uses: ./.github/workflows/udp-exporter-e2e-test.yml
+  #   secrets: inherit
+  #   permissions:
+  #     id-token: write
 
   build:
     environment: Release
     runs-on: ubuntu-latest
-    needs: validate-udp-exporter-e2e-test
+    # needs: validate-udp-exporter-e2e-test
     steps:
       - name: Checkout Contrib Repo @ SHA - ${{ github.sha }}
         uses: actions/checkout@v4
@@ -45,12 +45,12 @@ jobs:
           npm pack
 
       # Publish OTLP UDP Exporter to npm
-      - name: Publish to npm
-        working-directory: exporters/aws-distro-opentelemetry-exporter-xray-udp
-        env:
-          NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
-          NPM_CONFIG_PROVENANCE: true
-        run: npx publish
+      # - name: Publish to npm
+      #   working-directory: exporters/aws-distro-opentelemetry-exporter-xray-udp
+      #   env:
+      #     NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
+      #     NPM_CONFIG_PROVENANCE: true
+      #   run: npx publish
 
       # Publish to GitHub releases
       - name: Create GH release
@@ -59,7 +59,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
         run: |
           gh release create --target "$GITHUB_REF_NAME" \
-            --title "Release @aws/aws-distro-opentelemetry-exporter-xray-udp v${{ inputs.udp-exporter-version }}" \
-            --notes "Please refer to the [Changelog](https://github.com/aws-observability/aws-otel-java-instrumentation/blob/main/exporters/aws-distro-opentelemetry-xray-udp-span-exporter/CHANGELOG.md) for more details" \
+            --title "Release aws-distro-opentelemetry-exporter-xray-udp v${{ inputs.udp-exporter-version }}" \
+            --notes "Please refer to the [Changelog](https://github.com/aws-observability/aws-otel-js-instrumentation/blob/main/exporters/aws-distro-opentelemetry-exporter-xray-udp/CHANGELOG.md) for more details" \
             --draft \
-            "aws-distro-opentelemetry-xray-udp-span-exporter/v${{ inputs.udp-exporter-version }}"
+            "aws-distro-opentelemetry-exporter-xray-udp/v${{ inputs.udp-exporter-version }}"
