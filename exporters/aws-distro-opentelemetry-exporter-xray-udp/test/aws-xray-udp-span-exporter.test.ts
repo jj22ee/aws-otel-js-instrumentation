@@ -75,7 +75,7 @@ describe('UdpExporterTest', () => {
 });
 
 describe('AwsXrayUdpSpanExporterTest', () => {
-  let AwsXrayUdpSpanExporter: AwsXrayUdpSpanExporter;
+  let awsXrayUdpSpanExporter: AwsXrayUdpSpanExporter;
   let udpExporterMock: { sendData: any; shutdown: any };
   let diagErrorSpy: sinon.SinonSpy<[message: string, ...args: unknown[]], void>;
   const endpoint = '127.0.0.1:3000';
@@ -124,7 +124,7 @@ describe('AwsXrayUdpSpanExporterTest', () => {
     diagErrorSpy = sinon.spy(diag, 'error');
 
     // Create an instance of AwsXrayUdpSpanExporter
-    AwsXrayUdpSpanExporter = new AwsXrayUdpSpanExporter(endpoint, prefix);
+    awsXrayUdpSpanExporter = new AwsXrayUdpSpanExporter(endpoint, prefix);
   });
 
   afterEach(() => {
@@ -137,7 +137,7 @@ describe('AwsXrayUdpSpanExporterTest', () => {
     // Stub ProtobufTraceSerializer.serializeRequest
     sinon.stub(ProtobufTraceSerializer, 'serializeRequest').returns(serializedData);
 
-    AwsXrayUdpSpanExporter.export(spans, callback);
+    awsXrayUdpSpanExporter.export(spans, callback);
 
     expect(udpExporterMock.sendData.calledOnceWith(serializedData, 'T1')).toBe(true);
     expect(callback.calledOnceWith({ code: ExportResultCode.SUCCESS })).toBe(true);
@@ -149,7 +149,7 @@ describe('AwsXrayUdpSpanExporterTest', () => {
     sinon.stub(ProtobufTraceSerializer, 'serializeRequest').returns(undefined);
     const callback = sinon.stub();
 
-    AwsXrayUdpSpanExporter.export(spans, callback);
+    awsXrayUdpSpanExporter.export(spans, callback);
 
     expect(callback.notCalled).toBe(true);
     expect(udpExporterMock.sendData.notCalled).toBe(true);
@@ -162,18 +162,18 @@ describe('AwsXrayUdpSpanExporterTest', () => {
 
     const callback = sinon.stub();
 
-    AwsXrayUdpSpanExporter.export(spans, callback);
+    awsXrayUdpSpanExporter.export(spans, callback);
 
     expect(diagErrorSpy.calledOnceWith('Error exporting spans: %s', sinon.match.instanceOf(Error))).toBe(true);
     expect(callback.calledOnceWith({ code: ExportResultCode.FAILED })).toBe(true);
   });
 
   it('should forceFlush without throwing', async () => {
-    expect(AwsXrayUdpSpanExporter.forceFlush()).resolves.not.toThrow();
+    expect(awsXrayUdpSpanExporter.forceFlush()).resolves.not.toThrow();
   });
 
   it('should shutdown the UDP exporter successfully', async () => {
-    await AwsXrayUdpSpanExporter.shutdown();
+    await awsXrayUdpSpanExporter.shutdown();
     expect(udpExporterMock.shutdown.calledOnce).toBe(true);
   });
 
