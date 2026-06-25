@@ -126,6 +126,8 @@ interface OtlpLogHeaderSetting {
  */
 export class AwsOpentelemetryConfigurator {
   private resource: Resource;
+  // TEST-ONLY (revertible): global resource + EC2 ASG detector, used by ServiceEvents + DI.
+  private serviceEventsResource: Resource;
   private instrumentations: Instrumentation[];
   private idGenerator: IdGenerator;
   private sampler: Sampler;
@@ -185,18 +187,13 @@ export class AwsOpentelemetryConfigurator {
       defaultDetectors.push(envDetector);
     } else {
       // envDetector needs to be last so it can override any conflicting resource attributes.
-      // Ec2AutoScalingGroupDetector adds the ASG instance tag (ec2.tag.aws:autoscaling:groupName)
-      // that the stock awsEc2Detector omits — needed for SDK-side environment resolution to
-      // match the CloudWatch agent on EC2 (ec2:<asg>).
-      defaultDetectors = [
-        processDetector,
-        hostDetector,
-        awsEc2Detector,
-        new Ec2AutoScalingGroupDetector(),
-        awsEcsDetector,
-        awsEksDetector,
-        envDetector,
-      ];
+      // TEST-ONLY (revertible): the Ec2AutoScalingGroupDetector is intentionally NOT in the
+      // global detector list, so ec2.tag.aws:autoscaling:groupName does NOT ride the global
+      // resource (which feeds Application Signals). The CloudWatch agent reads that exact key
+      // off incoming telemetry (awsentity processor) and would resolve EC2 environment from
+      // our SDK-sent value, making the AppSignals "baseline" circular during the env test.
+      // The ASG is instead folded into the dedicated ServiceEvents resource below.
+      defaultDetectors = [processDetector, hostDetector, awsEc2Detector, awsEcsDetector, awsEksDetector, envDetector];
     }
 
     const internalConfig: ResourceDetectionConfig = {
@@ -205,6 +202,17 @@ export class AwsOpentelemetryConfigurator {
 
     autoResource = this.customizeResource(autoResource.merge(detectResources(internalConfig)));
     this.resource = autoResource;
+
+    // TEST-ONLY (revertible): ServiceEvents + DI get their OWN resource, which is the global
+    // resource PLUS the EC2 ASG detector. This keeps ec2.tag.aws:autoscaling:groupName off the
+    // global/AppSignals resource (see note above) while still letting the SDK resolver compute
+    // ec2:<asg>. Off-EC2 the ASG detector contributes nothing, so this equals the global resource.
+    if (isLambdaEnvironment() || isAgentObservabilityEnabled()) {
+      this.serviceEventsResource = this.resource;
+    } else {
+      const asgConfig: ResourceDetectionConfig = { detectors: [new Ec2AutoScalingGroupDetector()] };
+      this.serviceEventsResource = this.resource.merge(detectResources(asgConfig));
+    }
 
     this.instrumentations = instrumentations;
     this.propagator = getPropagator();
@@ -279,6 +287,13 @@ export class AwsOpentelemetryConfigurator {
     }
 
     return config;
+  }
+
+  // TEST-ONLY (revertible): resource for ServiceEvents + DI (global resource + EC2 ASG
+  // detector). Kept separate from configure().resource so the ASG tag stays off the
+  // global/AppSignals resource. See the constructor note.
+  public getServiceEventsResource(): Resource {
+    return this.serviceEventsResource;
   }
 
   static isApplicationSignalsEnabled(): boolean {
