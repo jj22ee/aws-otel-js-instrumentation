@@ -7,6 +7,7 @@ import { EndpointMetricEvent, EndpointErrorMetric } from '../../../src/serviceev
 import { FunctionCallMetrics } from '../../../src/serviceevents/models/function-telemetry';
 import { IncidentSnapshot } from '../../../src/serviceevents/models/incident-telemetry';
 import { DeploymentContext } from '../../../src/serviceevents/models/deployment-telemetry';
+import { ResourceAttributes } from '../../../src/serviceevents/models/resource-attributes';
 import { OTLPAwsLogExporter } from '../../../src/exporter/otlp/aws/logs/otlp-aws-log-exporter';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-proto';
 import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base';
@@ -681,5 +682,40 @@ describe('ServiceEventsOtlpEmitter resource attributes', function () {
     const attrs = resourceAttrsOf(makeEmitter()); // no environment → key absent
     expect(attrs['deployment.environment']).toBeUndefined();
     expect(attrs['deployment.environment.name']).toBeUndefined();
+  });
+
+  it('folds detected cloud/k8s resource attributes (e.g. k8s.namespace.name) onto the resource', function () {
+    // The CloudWatch agent's Application Signals resolver builds aws.local.environment
+    // as `eks:<cluster>/<namespace>` from these resource attributes. Without them the
+    // resolver falls back to `UnknownNamespace`, breaking correlation with App Signals.
+    const resourceAttributes = new ResourceAttributes({
+      k8s_namespace_name: 'default',
+      k8s_cluster_name: 'my-cluster',
+      cloud_provider: 'aws',
+    });
+    const attrs = resourceAttrsOf(makeEmitter({ resourceAttributes }));
+    expect(attrs['k8s.namespace.name']).toBe('default');
+    expect(attrs['k8s.cluster.name']).toBe('my-cluster');
+    expect(attrs['cloud.provider']).toBe('aws');
+  });
+
+  it('lets a customer-set deployment.environment(.name) win over detected attributes (backwards compatible)', function () {
+    // Backwards compatibility: when the customer sets deployment.environment[.name]
+    // explicitly (carried via `environment`), it must still be respected even with
+    // detected resource attributes present. The explicit attrs merge LAST, so they win.
+    const resourceAttributes = new ResourceAttributes({ k8s_namespace_name: 'default' });
+    const attrs = resourceAttrsOf(makeEmitter({ environment: 'sample-env', resourceAttributes }));
+    expect(attrs['deployment.environment']).toBe('sample-env');
+    expect(attrs['deployment.environment.name']).toBe('sample-env');
+    // Detected attributes still ride along.
+    expect(attrs['k8s.namespace.name']).toBe('default');
+  });
+
+  it('works when no resourceAttributes are provided (unchanged pre-fix behavior)', function () {
+    // Defaults to an empty ResourceAttributes; no cloud/k8s keys appear, and the
+    // existing resource shape is otherwise unchanged.
+    const attrs = resourceAttrsOf(makeEmitter({ environment: 'prod' }));
+    expect(attrs['deployment.environment']).toBe('prod');
+    expect(attrs['k8s.namespace.name']).toBeUndefined();
   });
 });

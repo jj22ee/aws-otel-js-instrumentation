@@ -39,6 +39,8 @@ import { EndpointMetricEvent, EndpointErrorMetric } from '../models/endpoint-tel
 import { FunctionCallMetrics, DurationMetrics } from '../models/function-telemetry';
 import { IncidentSnapshot } from '../models/incident-telemetry';
 import { DeploymentContext } from '../models/deployment-telemetry';
+import { ResourceAttributes } from '../models/resource-attributes';
+import { stampLocalEnvironment } from '../utils/environment-resolver';
 import {
   ServiceEventsCloudWatchLogFileExporter,
   ServiceEventsCloudWatchMetricFileExporter,
@@ -62,6 +64,20 @@ export interface ServiceEventsOtlpEmitterOptions {
    * and isn't repeated on every per-call attribute set.
    */
   sdkVersion?: string;
+  /**
+   * Cloud/host/k8s resource attributes detected from `OTEL_RESOURCE_ATTRIBUTES`
+   * (e.g. `k8s.namespace.name`, `k8s.cluster.name`, `cloud.*`). Folded onto the
+   * OTel Resource of every ServiceEvents signal so the CloudWatch agent's
+   * Application Signals resolver computes the SAME `aws.local.environment`
+   * (e.g. `eks:<cluster>/<namespace>`) it computes for App Signals telemetry —
+   * without these, the resolver falls back to `UnknownNamespace` and the two
+   * signals fail to correlate.
+   */
+  resourceAttributes?: ResourceAttributes;
+  // The fully-detected OTel Resource (from the configurator). When provided, the emitter
+  // uses this as the resource base and computes aws.local.environment locally — enabling
+  // the SDK-only environment-alignment approach (no CWAgent dependency for env resolution).
+  detectedResource?: { attributes: Record<string, unknown> };
   logsEndpoint?: string;
   metricsEndpoint?: string;
   /**
@@ -109,6 +125,8 @@ export class ServiceEventsOtlpEmitter {
   private readonly serviceName: string;
   private readonly environment?: string;
   private readonly sdkVersion: string;
+  private readonly resourceAttributes: ResourceAttributes;
+  private readonly detectedResource?: { attributes: Record<string, unknown> };
   private readonly logsEndpoint: string;
   private readonly metricsEndpoint: string;
   private readonly outputFile: string;
@@ -123,6 +141,8 @@ export class ServiceEventsOtlpEmitter {
     // deployment.environment resource attribute / environment dimension are omitted.
     this.environment = opts.environment;
     this.sdkVersion = opts.sdkVersion ?? '';
+    this.resourceAttributes = opts.resourceAttributes ?? new ResourceAttributes();
+    this.detectedResource = opts.detectedResource;
     this.outputFile = opts.outputFile ?? process.env.OTEL_AWS_SERVICE_EVENTS_OUTPUT_FILE ?? '';
     this.logsEndpoint = resolveLogsEndpoint(opts.logsEndpoint);
     this.metricsEndpoint = resolveMetricsEndpoint(opts.metricsEndpoint);
@@ -199,13 +219,26 @@ export class ServiceEventsOtlpEmitter {
         resourceAttrs['vcs.repository.url.full'] = this.deploymentContext.git_repo_url;
       }
 
-      // Merge onto the OTel default resource so SDK-identity attributes
-      // (`telemetry.sdk.language` / `.name` / `.version`) flow with every signal —
-      // resourceFromAttributes() alone does NOT include them. Our explicit attrs win
-      // over the default (merge spec: incoming overrides existing), so the placeholder
-      // `service.name` from defaultResource() is replaced by ours. Mirrors Python
-      // (Resource.create merges the default) and Java (uses the autoconfigured resource).
-      const resource = defaultResource().merge(resourceFromAttributes(resourceAttrs));
+      // Build the OTel Resource for ServiceEvents signals. When the fully-detected
+      // resource from the configurator is available (SDK-only PoC), use it directly as
+      // the base — it carries all cloud/host/k8s attributes the environment resolver
+      // needs (k8s.cluster.name, k8s.namespace.name, cloud.platform, ec2 ASG tag, etc.).
+      // Explicit SE attrs are merged LAST so customer-set deployment.environment[.name]
+      // wins (backwards compatible). The SDK-side resolver then computes
+      // aws.local.environment with the same precedence the agent would use.
+      //
+      // When detectedResource is unavailable, falls back to the env-var-parsed path.
+      let baseResource = this.detectedResource
+        ? resourceFromAttributes(this.detectedResource.attributes as Record<string, string>)
+        : defaultResource().merge(resourceFromAttributes(this.resourceAttributes.toDict()));
+
+      const resource = baseResource.merge(resourceFromAttributes(resourceAttrs));
+
+      // SDK-only environment resolution: compute aws.local.environment from the
+      // final resource attributes and stamp it, matching the agent's resolver precedence.
+      const resolvedAttrs = { ...resource.attributes } as Record<string, string>;
+      stampLocalEnvironment(resolvedAttrs);
+      const finalResource = resource.merge(resourceFromAttributes(resolvedAttrs));
 
       const useFile = !!this.outputFile;
 
@@ -214,7 +247,7 @@ export class ServiceEventsOtlpEmitter {
           ? new ServiceEventsCloudWatchLogFileExporter(this.outputFile)
           : wrapExporterSuppressed(this.buildLogOtlpExporter(CompressionAlgorithm.NONE));
         this.loggerProvider = new LoggerProvider({
-          resource,
+          resource: finalResource,
           processors: [new BatchLogRecordProcessor(logExporter)],
         });
       }
@@ -239,7 +272,7 @@ export class ServiceEventsOtlpEmitter {
               })
             );
         this.meterProvider = new MeterProvider({
-          resource,
+          resource: finalResource,
           readers: [
             new PeriodicExportingMetricReader({
               exporter: metricExporter,

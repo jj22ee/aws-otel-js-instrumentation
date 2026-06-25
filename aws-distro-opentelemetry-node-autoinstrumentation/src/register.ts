@@ -291,7 +291,11 @@ try {
       // config.enabled mirrors OTEL_AWS_SERVICE_EVENTS_ENABLED directly; the outer
       // bundling gate above has already decided ServiceEvents should run, so flip
       // the inner flag on regardless of whether the env var was set.
-      const serviceeventsConfig = { ...createServiceEventsConfigFromEnv(), enabled: true };
+      const serviceeventsConfig = {
+        ...createServiceEventsConfigFromEnv(),
+        enabled: true,
+        detectedResource: configuration.resource,
+      };
       const serviceevents = getServiceEventsInstrumentation(serviceeventsConfig);
       if (serviceevents) {
         serviceevents.initialize();

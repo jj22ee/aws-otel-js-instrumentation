@@ -22,6 +22,7 @@ import { ZipkinExporter } from '@opentelemetry/exporter-zipkin';
 import { AWSXRayIdGenerator } from '@opentelemetry/id-generator-aws-xray';
 import { Instrumentation } from '@opentelemetry/instrumentation';
 import { awsEc2Detector, awsEcsDetector, awsEksDetector } from '@opentelemetry/resource-detector-aws';
+import { Ec2AutoScalingGroupDetector } from './serviceevents/utils/ec2-asg-detector';
 import {
   Resource,
   ResourceDetectionConfig,
@@ -184,7 +185,18 @@ export class AwsOpentelemetryConfigurator {
       defaultDetectors.push(envDetector);
     } else {
       // envDetector needs to be last so it can override any conflicting resource attributes.
-      defaultDetectors = [processDetector, hostDetector, awsEc2Detector, awsEcsDetector, awsEksDetector, envDetector];
+      // Ec2AutoScalingGroupDetector adds the ASG instance tag (ec2.tag.aws:autoscaling:groupName)
+      // that the stock awsEc2Detector omits — needed for SDK-side environment resolution to
+      // match the CloudWatch agent on EC2 (ec2:<asg>).
+      defaultDetectors = [
+        processDetector,
+        hostDetector,
+        awsEc2Detector,
+        new Ec2AutoScalingGroupDetector(),
+        awsEcsDetector,
+        awsEksDetector,
+        envDetector,
+      ];
     }
 
     const internalConfig: ResourceDetectionConfig = {
