@@ -151,6 +151,13 @@ export class ServiceEventsOtlpEmitter {
   // — or there were none to wait for. ensureInitialized() defers until this is true so the
   // resolver sees aws.ecs.cluster.arn / ASG tag / cloud.platform.
   private asyncResourceReady: boolean = false;
+  // Resolves when asyncResourceReady becomes true. Lets callers (e.g. the
+  // DeploymentEventCollector's startup emit) defer until the emitter can actually initialize,
+  // instead of firing synchronously during construction and being silently dropped by
+  // ensureInitialized()'s readiness gate. Always settles — the constructor races detector
+  // resolution against a 2s timeout, so this never hangs.
+  private readonly readyPromise: Promise<void>;
+  private resolveReady!: () => void;
   private readonly logsEndpoint: string;
   private readonly metricsEndpoint: string;
   private readonly outputFile: string;
@@ -160,6 +167,10 @@ export class ServiceEventsOtlpEmitter {
   private readonly logStream: string;
 
   constructor(opts: ServiceEventsOtlpEmitterOptions = {}) {
+    // Set up the readiness promise first so the resolver is available to the branches below.
+    this.readyPromise = new Promise<void>(resolve => {
+      this.resolveReady = resolve;
+    });
     this.serviceName = opts.serviceName ?? 'UnknownService';
     // No sentinel: when environment is unset it stays undefined and the
     // deployment.environment resource attribute / environment dimension are omitted.
@@ -188,9 +199,11 @@ export class ServiceEventsOtlpEmitter {
       });
       Promise.race([waitWithCatch, timeout]).finally(() => {
         this.asyncResourceReady = true;
+        this.resolveReady();
       });
     } else {
       this.asyncResourceReady = true;
+      this.resolveReady();
     }
     this.outputFile = opts.outputFile ?? process.env.OTEL_AWS_SERVICE_EVENTS_OUTPUT_FILE ?? '';
     this.logsEndpoint = resolveLogsEndpoint(opts.logsEndpoint);
@@ -212,6 +225,17 @@ export class ServiceEventsOtlpEmitter {
 
   getDeploymentContext(): DeploymentContext {
     return this.deploymentContext;
+  }
+
+  /**
+   * Resolves once the emitter is ready to initialize — i.e. the detected resource's async
+   * attributes have settled (or the 2s timeout elapsed, or there were none to wait for).
+   * Callers that emit at startup (the DeploymentEventCollector) await this so their first
+   * emit isn't silently dropped by ensureInitialized()'s readiness gate. Resolves immediately
+   * if already ready. Never rejects and never hangs (the constructor races a 2s timeout).
+   */
+  whenReady(): Promise<void> {
+    return this.readyPromise;
   }
 
   /**
