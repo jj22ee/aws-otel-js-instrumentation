@@ -718,4 +718,48 @@ describe('ServiceEventsOtlpEmitter resource attributes', function () {
     expect(attrs['deployment.environment']).toBe('prod');
     expect(attrs['k8s.namespace.name']).toBeUndefined();
   });
+
+  it('awaits the detected resource async attributes before resolving aws.local.environment', async function () {
+    // Regression test for the JS async-detector race: the AWS resource detectors (ECS/EC2)
+    // are async, so a live Resource starts with asyncAttributesPending=true and its async
+    // attributes (e.g. aws.ecs.cluster.arn) are absent from `.attributes` until
+    // waitForAsyncAttributes() resolves. Before the fix, the emitter snapshotted too early
+    // and resolved ec2:default. Now it defers init until the async attrs settle.
+    let resolveAsync: () => void = () => {};
+    const asyncDone = new Promise<void>(r => (resolveAsync = r));
+    const detectedResource = {
+      // Sync attrs available immediately; the ECS cluster arn arrives only after await.
+      attributes: { 'cloud.platform': 'aws_ecs' } as Record<string, unknown>,
+      asyncAttributesPending: true,
+      waitForAsyncAttributes: () => asyncDone,
+    };
+    const emitter = makeEmitter({ detectedResource });
+
+    // Before async attrs settle, the emitter is gated (not ready) and an emit cannot init.
+    expect((emitter as any).asyncResourceReady).toBe(false);
+    emitter.emitEndpointSummary(makeEndpointEvent());
+    expect((emitter as any).loggerProvider).toBeFalsy(); // not initialized (null/undefined)
+
+    // Async detector now settles, adding the ECS cluster arn.
+    detectedResource.attributes['aws.ecs.cluster.arn'] = 'arn:aws:ecs:us-west-2:1:cluster/my-ecs';
+    resolveAsync();
+    await asyncDone;
+    await new Promise(r => setImmediate(r)); // let the .finally() flip asyncResourceReady
+    expect((emitter as any).asyncResourceReady).toBe(true);
+
+    const attrs = resourceAttrsOf(emitter); // emits again → now initializes
+    expect(attrs['aws.ecs.cluster.arn']).toBe('arn:aws:ecs:us-west-2:1:cluster/my-ecs');
+    expect(attrs['aws.local.environment']).toBe('ecs:my-ecs');
+  });
+
+  it('does not defer when the detected resource has no pending async attributes', function () {
+    // A resource with asyncAttributesPending=false (or absent) must initialize on first
+    // emit, unchanged — the gate only applies to genuinely-pending async resources.
+    const detectedResource = {
+      attributes: { 'cloud.platform': 'aws_ecs', 'aws.ecs.cluster.arn': 'arn:aws:ecs:us-west-2:1:cluster/c' },
+      asyncAttributesPending: false,
+    };
+    const attrs = resourceAttrsOf(makeEmitter({ detectedResource }));
+    expect(attrs['aws.local.environment']).toBe('ecs:c');
+  });
 });

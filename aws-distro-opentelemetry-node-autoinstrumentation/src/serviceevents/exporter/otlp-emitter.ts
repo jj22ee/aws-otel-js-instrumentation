@@ -77,7 +77,17 @@ export interface ServiceEventsOtlpEmitterOptions {
   // The fully-detected OTel Resource (from the configurator). When provided, the emitter
   // uses this as the resource base and computes aws.local.environment locally — enabling
   // the SDK-only environment-alignment approach (no CWAgent dependency for env resolution).
-  detectedResource?: { attributes: Record<string, unknown> };
+  //
+  // IMPORTANT: this is the LIVE Resource (not a flattened attribute snapshot). The AWS
+  // resource detectors (ECS/EC2/EKS) are ASYNC in JS, so `resource.attributes` is empty of
+  // their values until `waitForAsyncAttributes()` has resolved. The emitter awaits that
+  // (kicked off in the constructor) before snapshotting, so aws.ecs.cluster.arn / the ASG
+  // tag / cloud.platform are present when the resolver runs — matching what AppSignals/DI do.
+  detectedResource?: {
+    attributes: Record<string, unknown>;
+    asyncAttributesPending?: boolean;
+    waitForAsyncAttributes?: () => Promise<void>;
+  };
   logsEndpoint?: string;
   metricsEndpoint?: string;
   /**
@@ -126,7 +136,15 @@ export class ServiceEventsOtlpEmitter {
   private readonly environment?: string;
   private readonly sdkVersion: string;
   private readonly resourceAttributes: ResourceAttributes;
-  private readonly detectedResource?: { attributes: Record<string, unknown> };
+  private readonly detectedResource?: {
+    attributes: Record<string, unknown>;
+    asyncAttributesPending?: boolean;
+    waitForAsyncAttributes?: () => Promise<void>;
+  };
+  // True once the detected resource's async attributes (ECS/EC2/EKS detectors) have settled
+  // — or there were none to wait for. ensureInitialized() defers until this is true so the
+  // resolver sees aws.ecs.cluster.arn / ASG tag / cloud.platform.
+  private asyncResourceReady: boolean = false;
   private readonly logsEndpoint: string;
   private readonly metricsEndpoint: string;
   private readonly outputFile: string;
@@ -143,6 +161,24 @@ export class ServiceEventsOtlpEmitter {
     this.sdkVersion = opts.sdkVersion ?? '';
     this.resourceAttributes = opts.resourceAttributes ?? new ResourceAttributes();
     this.detectedResource = opts.detectedResource;
+    // Kick off async-attribute resolution now (fire-and-forget). The AWS detectors are
+    // async; without awaiting waitForAsyncAttributes() the resource's .attributes never
+    // gains the ECS/EC2/EKS values (asyncAttributesPending stays true forever), so the
+    // resolver would wrongly fall through to ec2:default. First emit happens on a request,
+    // well after this resolves. Mirrors DI's resolveResourceAttributes() and AppSignals.
+    const dr = this.detectedResource;
+    if (dr && dr.asyncAttributesPending && typeof dr.waitForAsyncAttributes === 'function') {
+      dr.waitForAsyncAttributes()
+        .catch(() => {
+          // A detector rejecting must never break ServiceEvents — proceed with whatever
+          // attributes resolved.
+        })
+        .finally(() => {
+          this.asyncResourceReady = true;
+        });
+    } else {
+      this.asyncResourceReady = true;
+    }
     this.outputFile = opts.outputFile ?? process.env.OTEL_AWS_SERVICE_EVENTS_OUTPUT_FILE ?? '';
     this.logsEndpoint = resolveLogsEndpoint(opts.logsEndpoint);
     this.metricsEndpoint = resolveMetricsEndpoint(opts.metricsEndpoint);
@@ -184,6 +220,12 @@ export class ServiceEventsOtlpEmitter {
   private ensureInitialized(): boolean {
     if (this.logger && this.errorCounter) return true;
     if (this.initFailed) return false;
+    // Defer init until the detected resource's async attributes have settled, so the
+    // environment resolver sees the ECS/EC2/EKS attributes (otherwise it falls through to
+    // ec2:default). The very first emit may no-op; a subsequent one (the SE collectors emit
+    // on intervals + per request) initializes once ready. Only gates when there is a live
+    // resource with pending async attributes.
+    if (!this.asyncResourceReady) return false;
 
     try {
       // aws.local.service duplicates service.name for backend compatibility —
@@ -228,7 +270,7 @@ export class ServiceEventsOtlpEmitter {
       // aws.local.environment with the same precedence the agent would use.
       //
       // When detectedResource is unavailable, falls back to the env-var-parsed path.
-      let baseResource = this.detectedResource
+      const baseResource = this.detectedResource
         ? resourceFromAttributes(this.detectedResource.attributes as Record<string, string>)
         : defaultResource().merge(resourceFromAttributes(this.resourceAttributes.toDict()));
 
