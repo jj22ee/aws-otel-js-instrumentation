@@ -50,6 +50,12 @@ import { wrapExporterSuppressed } from './suppressed-exporter';
 const INSTRUMENTATION_SCOPE = 'serviceevents';
 const INSTRUMENTATION_VERSION = '1.0';
 
+// Max time to wait for the detected resource's async attributes (ECS/EC2/EKS detectors) to
+// settle before ServiceEvents initializes anyway. A hung/blocked detector (e.g. IMDS
+// unreachable) must never permanently disable ServiceEvents — after this we proceed with
+// whatever resolved. Mirrors DI's RESOURCE_ATTRIBUTES_TIMEOUT_MS.
+const ASYNC_ATTRIBUTES_TIMEOUT_MS = 2000;
+
 const EVENT_NAME_ENDPOINT_SUMMARY = 'aws.service_events.endpoint_summary';
 const EVENT_NAME_FUNCTION_CALL = 'aws.service_events.function_call';
 const EVENT_NAME_INCIDENT_SNAPSHOT = 'aws.service_events.incident_snapshot';
@@ -168,14 +174,21 @@ export class ServiceEventsOtlpEmitter {
     // well after this resolves. Mirrors DI's resolveResourceAttributes() and AppSignals.
     const dr = this.detectedResource;
     if (dr && dr.asyncAttributesPending && typeof dr.waitForAsyncAttributes === 'function') {
-      dr.waitForAsyncAttributes()
-        .catch(() => {
-          // A detector rejecting must never break ServiceEvents — proceed with whatever
-          // attributes resolved.
-        })
-        .finally(() => {
-          this.asyncResourceReady = true;
-        });
+      // Race the detector resolution against a timeout: a hung/slow detector (e.g. an IMDS
+      // call when IMDS is blocked) must NEVER permanently gate ServiceEvents off. After the
+      // timeout we proceed with whatever attributes have resolved so far — same safety
+      // pattern as Dynamic Instrumentation's resolveResourceAttributes().
+      const waitWithCatch = dr.waitForAsyncAttributes().catch(() => {
+        // A detector rejecting must not break ServiceEvents — proceed with what resolved.
+      });
+      const timeout = new Promise<void>(resolve => {
+        const timer = setTimeout(resolve, ASYNC_ATTRIBUTES_TIMEOUT_MS);
+        // Don't keep the event loop alive solely for this timer.
+        if (typeof timer.unref === 'function') timer.unref();
+      });
+      Promise.race([waitWithCatch, timeout]).finally(() => {
+        this.asyncResourceReady = true;
+      });
     } else {
       this.asyncResourceReady = true;
     }

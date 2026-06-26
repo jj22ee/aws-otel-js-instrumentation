@@ -752,6 +752,29 @@ describe('ServiceEventsOtlpEmitter resource attributes', function () {
     expect(attrs['aws.local.environment']).toBe('ecs:my-ecs');
   });
 
+  it('initializes after the timeout even if a detector never resolves (no permanent gate)', async function () {
+    // SAFETY regression: a hung/blocked detector (e.g. IMDS unreachable on EC2) must NOT
+    // permanently disable ServiceEvents. waitForAsyncAttributes() that never settles should
+    // be overridden by the internal timeout, after which the emitter initializes with
+    // whatever attributes resolved synchronously.
+    const neverResolves = new Promise<void>(() => {}); // intentionally never settles
+    const detectedResource = {
+      attributes: { 'cloud.platform': 'aws_ec2' } as Record<string, unknown>,
+      asyncAttributesPending: true,
+      waitForAsyncAttributes: () => neverResolves,
+    };
+    const emitter = makeEmitter({ detectedResource });
+    expect((emitter as any).asyncResourceReady).toBe(false);
+
+    // Wait past the 2s internal timeout.
+    await new Promise(r => setTimeout(r, 2300));
+    expect((emitter as any).asyncResourceReady).toBe(true);
+
+    const attrs = resourceAttrsOf(emitter); // emits → initializes with sync attrs
+    // EC2 with no ASG resolved → ec2:default (the resolver fallback), NOT stuck/no-output.
+    expect(attrs['aws.local.environment']).toBe('ec2:default');
+  });
+
   it('does not defer when the detected resource has no pending async attributes', function () {
     // A resource with asyncAttributesPending=false (or absent) must initialize on first
     // emit, unchanged — the gate only applies to genuinely-pending async resources.
