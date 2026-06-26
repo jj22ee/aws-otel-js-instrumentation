@@ -86,8 +86,24 @@ describe('environment-resolver', function () {
       expect(resolveLocalEnvironment({ attributes: { 'cloud.platform': 'aws_ec2' } })).toBe('ec2:default');
     });
 
-    it('empty attributes → ec2:default', function () {
-      expect(resolveLocalEnvironment({ attributes: {} })).toBe('ec2:default');
+    it('empty attributes (non-AWS / undetected host) → "" (matches agent leaving Environment empty)', function () {
+      expect(resolveLocalEnvironment({ attributes: {} })).toBe('');
+    });
+
+    it('non-AWS host with only service.name/host.name → ""', function () {
+      expect(resolveLocalEnvironment({ attributes: { 'service.name': 'svc', 'host.name': 'my-vm' } })).toBe('');
+    });
+
+    it('EC2 detected via host.id → ec2:default', function () {
+      expect(resolveLocalEnvironment({ attributes: { 'cloud.platform': 'aws_ec2', 'host.id': 'i-0abc' } })).toBe(
+        'ec2:default'
+      );
+    });
+
+    it('stampLocalEnvironment omits the key on a non-AWS host', function () {
+      const attrs: Record<string, string> = { 'service.name': 'svc' };
+      stampLocalEnvironment(attrs);
+      expect(attrs['aws.local.environment']).toBeUndefined();
     });
   });
 

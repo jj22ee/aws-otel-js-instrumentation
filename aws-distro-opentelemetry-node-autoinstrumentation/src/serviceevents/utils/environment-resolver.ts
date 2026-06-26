@@ -7,7 +7,14 @@
  *
  *   1. Explicit deployment.environment[.name] → use as-is
  *   2. EKS / K8s → "eks:<cluster>/<namespace>" or "k8s:<cluster>/<namespace>"
- *   3. EC2 → "ec2:<asg>" when an ASG is known, else "ec2:default"
+ *   3. ECS → "ecs:<cluster>"
+ *   4. EC2 (host is actually EC2) → "ec2:<asg>" when an ASG is known, else "ec2:default"
+ *   5. Otherwise (non-AWS / undetected host) → "" (omit the key)
+ *
+ * The EC2 branch is gated on the host actually being EC2, mirroring the CloudWatch agent,
+ * whose environment branches only run for EC2 (Platform == ModeEC2) or Kubernetes. On a
+ * non-AWS / non-K8s host the agent leaves the Environment empty, so the SDK returns ""
+ * rather than falsely claiming "ec2:default".
  *
  * This enables the SDK to compute the same environment value the agent would, without
  * depending on the agent process — an SDK-only alternative for deployment scenarios
@@ -29,8 +36,7 @@ export function resolveLocalEnvironment(input: EnvironmentResolverInput): string
   const attrs = input.attributes;
 
   // 1. Explicit deployment.environment[.name] wins outright.
-  const explicitEnv =
-    asString(attrs['deployment.environment.name']) || asString(attrs['deployment.environment']);
+  const explicitEnv = asString(attrs['deployment.environment.name']) || asString(attrs['deployment.environment']);
   if (explicitEnv) {
     return explicitEnv;
   }
@@ -58,14 +64,17 @@ export function resolveLocalEnvironment(input: EnvironmentResolverInput): string
     }
   }
 
-  // 4. EC2: use ASG if available.
+  // 4. EC2: only when the host is actually EC2 (matches the agent's Platform == ModeEC2
+  //    gate). Signals: cloud.platform=aws_ec2, host.id (EC2 instance id from the OTel EC2
+  //    detector), or the ASG tag (an IMDS-only EC2 signal).
   const asg = asString(attrs['ec2.tag.aws:autoscaling:groupName']);
-  if (asg) {
-    return `ec2:${asg}`;
+  const isEc2 = cloudPlatform === 'aws_ec2' || !!asString(attrs['host.id']) || !!asg;
+  if (isEc2) {
+    return asg ? `ec2:${asg}` : 'ec2:default';
   }
 
-  // 5. Default fallback.
-  return 'ec2:default';
+  // 5. Non-AWS / undetected host: the agent leaves Environment empty here, so do we.
+  return '';
 }
 
 /**
@@ -77,7 +86,12 @@ export function stampLocalEnvironment(attrs: Record<string, string>): void {
   if (attrs[AWS_LOCAL_ENVIRONMENT_KEY]) {
     return;
   }
-  attrs[AWS_LOCAL_ENVIRONMENT_KEY] = resolveLocalEnvironment({ attributes: attrs });
+  // Only stamp when a value resolved; a non-AWS host omits the key entirely (matching the
+  // CloudWatch agent, which leaves Environment empty there).
+  const resolved = resolveLocalEnvironment({ attributes: attrs });
+  if (resolved) {
+    attrs[AWS_LOCAL_ENVIRONMENT_KEY] = resolved;
+  }
 }
 
 function asString(v: unknown): string {
