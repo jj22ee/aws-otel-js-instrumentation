@@ -23,6 +23,7 @@ import { AWSXRayIdGenerator } from '@opentelemetry/id-generator-aws-xray';
 import { Instrumentation } from '@opentelemetry/instrumentation';
 import { awsEc2Detector, awsEcsDetector, awsEksDetector } from '@opentelemetry/resource-detector-aws';
 import { Ec2AutoScalingGroupDetector } from './serviceevents/utils/ec2-asg-detector';
+import { EcsClusterDetector } from './serviceevents/utils/ecs-cluster-detector';
 import {
   Resource,
   ResourceDetectionConfig,
@@ -210,8 +211,15 @@ export class AwsOpentelemetryConfigurator {
     if (isLambdaEnvironment() || isAgentObservabilityEnabled()) {
       this.serviceEventsResource = this.resource;
     } else {
-      const asgConfig: ResourceDetectionConfig = { detectors: [new Ec2AutoScalingGroupDetector()] };
-      this.serviceEventsResource = this.resource.merge(detectResources(asgConfig));
+      // Ec2AutoScalingGroupDetector: ASG tag for ec2:<asg> (kept off the global resource).
+      // EcsClusterDetector: ECS cluster ARN for ecs:<cluster> — works around the upstream
+      // AwsEcsDetector bug (it returns attributes as a single Promise, which ResourceImpl
+      // drops via Object.entries(), so aws.ecs.cluster.arn never lands). Off-platform both
+      // contribute nothing, so this equals the global resource.
+      const seDetectorConfig: ResourceDetectionConfig = {
+        detectors: [new Ec2AutoScalingGroupDetector(), new EcsClusterDetector()],
+      };
+      this.serviceEventsResource = this.resource.merge(detectResources(seDetectorConfig));
     }
 
     this.instrumentations = instrumentations;
