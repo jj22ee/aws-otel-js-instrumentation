@@ -86,12 +86,14 @@ describe('environment-resolver', function () {
       expect(resolveLocalEnvironment({ attributes: { 'cloud.platform': 'aws_ec2' } })).toBe('ec2:default');
     });
 
-    it('empty attributes (non-AWS / undetected host) → "" (matches agent leaving Environment empty)', function () {
-      expect(resolveLocalEnvironment({ attributes: {} })).toBe('');
+    it('empty attributes (non-AWS / undetected host) → "generic:default" (matches agent generic resolver)', function () {
+      expect(resolveLocalEnvironment({ attributes: {} })).toBe('generic:default');
     });
 
-    it('non-AWS host with only service.name/host.name → ""', function () {
-      expect(resolveLocalEnvironment({ attributes: { 'service.name': 'svc', 'host.name': 'my-vm' } })).toBe('');
+    it('non-AWS host with only service.name/host.name → "generic:default"', function () {
+      expect(resolveLocalEnvironment({ attributes: { 'service.name': 'svc', 'host.name': 'my-vm' } })).toBe(
+        'generic:default'
+      );
     });
 
     it('EC2 detected via host.id → ec2:default', function () {
@@ -100,10 +102,10 @@ describe('environment-resolver', function () {
       );
     });
 
-    it('stampLocalEnvironment omits the key on a non-AWS host', function () {
+    it('stampLocalEnvironment stamps generic:default on a non-AWS host', function () {
       const attrs: Record<string, string> = { 'service.name': 'svc' };
       stampLocalEnvironment(attrs);
-      expect(attrs['aws.local.environment']).toBeUndefined();
+      expect(attrs['aws.local.environment']).toBe('generic:default');
     });
   });
 
