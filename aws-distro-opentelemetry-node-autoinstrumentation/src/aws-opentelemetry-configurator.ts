@@ -191,7 +191,7 @@ export class AwsOpentelemetryConfigurator {
       // TEST-ONLY (revertible): the Ec2AutoScalingGroupDetector is intentionally NOT in the
       // global detector list, so ec2.tag.aws:autoscaling:groupName does NOT ride the global
       // resource (which feeds Application Signals). The CloudWatch agent reads that exact key
-      // off incoming telemetry (awsentity processor) and would resolve EC2 environment from
+      // off incoming telemetry (awsapplicationsignals processor) and would resolve EC2 environment from
       // our SDK-sent value, making the AppSignals "baseline" circular during the env test.
       // The ASG is instead folded into the dedicated ServiceEvents resource below.
       defaultDetectors = [processDetector, hostDetector, awsEc2Detector, awsEcsDetector, awsEksDetector, envDetector];

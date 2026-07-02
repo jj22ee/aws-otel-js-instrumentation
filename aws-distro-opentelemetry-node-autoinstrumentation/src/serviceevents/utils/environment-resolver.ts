@@ -3,7 +3,7 @@
 
 /**
  * Resolves `aws.local.environment` from OTel Resource attributes using the same
- * precedence as the CloudWatch agent's awsentity processor:
+ * precedence as the CloudWatch agent's awsapplicationsignals processor:
  *
  *   1. Explicit deployment.environment[.name] → use as-is
  *   2. EKS / K8s → "eks:<cluster>/<namespace>" or "k8s:<cluster>/<namespace>"
